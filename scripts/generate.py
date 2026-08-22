@@ -5,6 +5,7 @@ Generate fortran sources
 """
 
 import os
+import argparse
 import glob
 import inspect
 import re
@@ -30,12 +31,20 @@ import mako.lookup
 logger = logging.getLogger(__name__)
 logging.basicConfig()
 logger.setLevel(logging.DEBUG)
-def main():
+def main(argv=None):
     try:
         curfile = os.path.abspath(__file__)
     except NameError:
         curfile = os.path.abspath(inspect.getsourcefile(lambda : None))
-    srcdir = os.path.join(os.path.dirname(curfile), '..', 'src', 'xbeachlibrary')
+    default_srcdir = os.path.join(os.path.dirname(curfile), '..', 'src', 'xbeachlibrary')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source-dir', default=default_srcdir)
+    parser.add_argument('--output-dir')
+    args = parser.parse_args(argv)
+
+    srcdir = os.path.abspath(args.source_dir)
+    outputdir = os.path.abspath(args.output_dir or srcdir)
+    os.makedirs(outputdir, exist_ok=True)
     templatedir = os.path.join(srcdir, "templates")
     variables_file = os.path.join(srcdir, 'variables.f90')
     parameter_file = os.path.join(srcdir, 'params.F90')
@@ -156,7 +165,7 @@ def main():
         template = lookup.get_template(template_name)
         filename = template_name.replace('.f90', '.inc')
         logger.info("converting %s to %s", template_name, filename)
-        with open(os.path.join(srcdir, filename), 'w') as f:
+        with open(os.path.join(outputdir, filename), 'w') as f:
             rendered = template.render(**locals())
             #print(rendered)
             f.write(rendered)
@@ -168,6 +177,6 @@ def main():
         "variables": variables
     }
     # store the extracted variables
-    json.dump(jsondata, open(os.path.join(srcdir, 'extractedvariables.json'), 'w'), indent=4)
+    json.dump(jsondata, open(os.path.join(outputdir, 'extractedvariables.json'), 'w'), indent=4)
 if __name__ == "__main__":
     main()

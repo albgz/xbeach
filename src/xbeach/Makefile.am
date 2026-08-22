@@ -20,7 +20,7 @@ LIBS+=${NETCDF_LIBS}  -lnetcdff
 endif
 
 
-CLEANFILES=*.mod *.MOD *.gen version.dat 
+CLEANFILES=*.mod *.MOD *.gen version.dat deps
 
 depclean: clean
 	rm -f $(deps)

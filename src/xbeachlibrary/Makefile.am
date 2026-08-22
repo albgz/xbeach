@@ -90,14 +90,21 @@ version.dat:
 logging.F90: version.dat writelog.inc writeloginterface.inc
 
 spacedecl.inc:
-	$(top_srcdir)/scripts/generate.py
+	$(top_srcdir)/scripts/generate.py \
+		--source-dir $(top_srcdir)/src/xbeachlibrary \
+		--output-dir $(builddir)
+
+# One generator invocation creates the complete include set. Building this
+# representative output first prevents parallel compilation from racing the
+# remaining generated includes.
+BUILT_SOURCES = spacedecl.inc
 
 # Set flags off by default
 # include link to top_srcdir so it can find config.h, or should this be builddir
 # wwvv changed following
 #libxbeach_la_FCFLAGS=-I$(top_builddir) -ffree-line-length-none -fPIC
 # into
-libxbeach_la_FCFLAGS=-I$(top_builddir) -fPIC
+libxbeach_la_FCFLAGS=-I$(top_builddir) -I$(builddir) -fPIC
 # if mpi, then add some flags
 if USEMPI
 libxbeach_la_FCFLAGS+=-DUSEMPI -DHAVE_MPI_WTIME
@@ -109,8 +116,40 @@ LIBS+=${NETCDF_LIBS} ${NETCDF_FORTRAN_LIBS} -lnetcdff
 endif
 
 # EXTRA_DIST=s.ind s.inp
-EXTRA_DIST=s.ind s.inp nh_pars.inc version.def
-CLEANFILES=*.mod *.MOD *.inc version.dat
+EXTRA_DIST = \
+	s.ind \
+	s.inp \
+	nh_pars.inc \
+	version.def \
+	variables.f90 \
+	templates/RF.f90 \
+	templates/RFveg.f90 \
+	templates/chartoindex.f90 \
+	templates/genmpi_coll.f90 \
+	templates/genmpi_distr.f90 \
+	templates/get_var.f90 \
+	templates/get_var_shape.f90 \
+	templates/getkey.f90 \
+	templates/index_allocate.f90 \
+	templates/index_allocated.f90 \
+	templates/index_deallocate.f90 \
+	templates/index_reallocate.f90 \
+	templates/indextos.f90 \
+	templates/mnemonic.f90 \
+	templates/nh_pars.f90 \
+	templates/ranges.f90 \
+	templates/set_var.f90 \
+	templates/space_alloc_arrays.f90 \
+	templates/space_alloc_arrays_dummies.f90 \
+	templates/space_alloc_scalars.f90 \
+	templates/space_distribute.f90 \
+	templates/space_ind.f90 \
+	templates/space_inp.f90 \
+	templates/spacedecl.f90 \
+	templates/writelog.f90 \
+	templates/writeloginterface.f90 \
+	templates/xmpi_bcast.f90
+CLEANFILES=*.mod *.MOD *.inc version.dat extractedvariables.json
 
 #depclean: clean
 #	rm -f $(deps)
