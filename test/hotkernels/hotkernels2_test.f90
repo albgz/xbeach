@@ -104,6 +104,7 @@ program hotkernels2
    dvdx2(:,:) = 0.d0;   dvdy2(:,:) = 0.d0
    s2kv = 0.2d0                 ! small sinh(2kh): forces the Dano clip on
    s2k2(:,:) = s2kv
+   s2k2(2,2) = 0.d0             ! dry-cell denominator must never be evaluated
    clip = 0.5d0*(4.d0*atan(1.d0))/10.d0    ! Trep = 10
 
    ! exact reference (same operation order as the production code)

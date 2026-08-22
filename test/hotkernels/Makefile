@@ -12,13 +12,15 @@
 LIBDIR = $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../src/xbeachlibrary)
 LIBS   = -L$(LIBDIR)/.libs -lxbeach -Wl,-rpath,"$(LIBDIR)/.libs"
 FC     = gfortran
-AM_FCFLAGS = -ffree-form -I$(LIBDIR)
+FCFLAGS = -g -O2
+CPPFLAGS = -I$(LIBDIR)
+AM_FCFLAGS = -ffree-form
 
 hotkernels_test: hotkernels_test.f90
-	$(FC) $(AM_FCFLAGS) -g -O2 hotkernels_test.f90 $(LIBS) -o $@
+	$(FC) $(CPPFLAGS) $(AM_FCFLAGS) $(FCFLAGS) hotkernels_test.f90 $(LDFLAGS) $(LIBS) -o $@
 
 hotkernels2_test: hotkernels2_test.f90
-	$(FC) $(AM_FCFLAGS) -g -O2 hotkernels2_test.f90 $(LIBS) -o $@
+	$(FC) $(CPPFLAGS) $(AM_FCFLAGS) $(FCFLAGS) hotkernels2_test.f90 $(LDFLAGS) $(LIBS) -o $@
 
 run: hotkernels_test hotkernels2_test
 	DYLD_LIBRARY_PATH=$(LIBDIR)/.libs ./hotkernels_test
