@@ -339,7 +339,11 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
      ast=ks/h
      do i=1,n
         if (sigz(i)>=1.d0) then
-           crel(i)=0.d0
+           if (rousepar>0.d0) then
+              crel(i)=0.d0
+           else
+              crel(i)=1.d0
+           endif
         elseif (sigz(i)>ast) then
            crel(i)=(sigz(i)/ast*(ast-1.d0)/(sigz(i)-1.d0))**(-rousepar)
         else
