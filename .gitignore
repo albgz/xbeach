@@ -48,6 +48,7 @@
 /test/hotkernels/*.o
 /test/hotkernels/hotkernels_test
 /test/hotkernels/hotkernels2_test
+/test/hotkernels/vsm_test
 /test/hotkernels/*.log
 /test/hotkernels/*.trs
 /test-suite.log

@@ -99,6 +99,7 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
    z0     = ks/33.
    uorb   =urms*sqrt(2.d0)
    cw=omega/k
+   delta=0.d0
    if (omega.gt.0.) then
       aorb   = uorb/omega
       delta  = 0.09*(aorb/ks)**0.82*ks/h
@@ -152,6 +153,9 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
  
    sigma0=z0/h
    uold=0.
+   dhdx=0.d0
+   dhdy=0.d0
+   ustz=0.d0
 
 ! Iteration for u en dhdx
   
@@ -334,7 +338,9 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
      rousepar=ws/kappa/ustar
      ast=ks/h
      do i=1,n
-        if (sigz(i)>ast) then
+        if (sigz(i)>=1.d0) then
+           crel(i)=0.d0
+        elseif (sigz(i)>ast) then
            crel(i)=(sigz(i)/ast*(ast-1.d0)/(sigz(i)-1.d0))**(-rousepar)
         else
            crel(i)=1.d0
