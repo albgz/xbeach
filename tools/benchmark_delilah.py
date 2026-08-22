@@ -11,6 +11,7 @@ import math
 import os
 import platform
 import re
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import cast
 
 OUTPUTS = ("H.dat", "E.dat", "Fx.dat", "Fy.dat")
+ORACLE_SOURCE_COMMIT = "8ccf245997bbb94b9edc43fdead341ff1db81faf"
 TIMESTEPS_RE = re.compile(r"Timesteps\s*:\s*(\d+)")
 DURATION_RE = re.compile(r"Duration\s*:\s*([0-9.Ee+-]+)")
 
@@ -78,24 +80,121 @@ def make_variables(path: Path, names: tuple[str, ...]) -> dict[str, str]:
     return values
 
 
+def is_gnu_fortran_name(name: str) -> bool:
+    return re.fullmatch(
+        r"(?:gfortran|"
+        r"[A-Za-z0-9_+.]+(?:-[A-Za-z0-9_+.]+)*-"
+        r"(?:linux-(?:gnu|musl)|apple-darwin[0-9.]*|w64-mingw32)-gfortran)"
+        r"(?:-[0-9]+(?:\.[0-9]+)*)?",
+        name,
+    ) is not None
+
+
+def resolve_gnu_fortran(token: str) -> Path | None:
+    """Resolve a real GNU driver, bypassing ccache-style masquerade links."""
+    if not is_gnu_fortran_name(Path(token).name):
+        return None
+    candidate_text = shutil.which(token)
+    if candidate_text is None:
+        return None
+    candidate = Path(candidate_text).absolute()
+    resolved = candidate.resolve()
+    if is_gnu_fortran_name(resolved.name):
+        return resolved
+    if resolved.name not in {"ccache", "sccache", "distcc"}:
+        return None
+
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        alternative = Path(directory or ".") / candidate.name
+        if not alternative.is_file() or not os.access(alternative, os.X_OK):
+            continue
+        alternative_resolved = alternative.resolve()
+        if alternative_resolved == resolved:
+            continue
+        if is_gnu_fortran_name(alternative_resolved.name):
+            return alternative_resolved
+    return None
+
+
 def compiler_provenance(source_repo: Path) -> dict[str, object]:
     variables = make_variables(
         source_repo / "src" / "xbeach" / "Makefile",
         ("FC", "FCFLAGS", "AM_FCFLAGS", "LDFLAGS", "LIBS"),
     )
-    command = variables.get("FC", "gfortran").split()[0]
-    compiler = shutil.which(command)
-    if compiler is None:
-        return {"configured_variables": variables, "path": None}
-    compiler_path = Path(compiler).resolve()
-    version = subprocess.check_output(
-        [str(compiler_path), "--version"], text=True, errors="replace"
-    ).splitlines()[0]
+    tokens = shlex.split(variables.get("FC", "gfortran"))
+    if not tokens:
+        raise RuntimeError("configured FC command is empty")
+    driver = shutil.which(tokens[0])
+    if driver is None:
+        raise RuntimeError(f"configured Fortran driver is unavailable: {tokens[0]}")
+    invocation_path = Path(driver).absolute()
+    command = [str(invocation_path), *tokens[1:]]
+    driver_path = Path(driver).resolve()
+    components = [driver_path]
+    cache_wrappers = {"ccache", "sccache", "distcc"}
+    mpi_wrappers = {"mpifort", "mpif90", "mpif77"}
+    driver_name = Path(tokens[0]).name
+    gnu_driver = None
+
+    if driver_name in cache_wrappers:
+        underlying_token = next(
+            (token for token in tokens[1:] if not token.startswith("-")),
+            None,
+        )
+        gnu_driver = resolve_gnu_fortran(underlying_token) if underlying_token else None
+        if gnu_driver is None:
+            raise RuntimeError(
+                "compiler cache wrapper must explicitly name a GNU Fortran driver"
+            )
+        components.append(gnu_driver)
+    elif driver_name in mpi_wrappers:
+        shown = None
+        for option in (("--showme:command",), ("-show",)):
+            completed = subprocess.run(
+                [str(invocation_path), *option],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if completed.returncode == 0 and completed.stdout.strip():
+                shown = shlex.split(completed.stdout)[0]
+                break
+        gnu_driver = resolve_gnu_fortran(shown) if shown else None
+        if gnu_driver is None:
+            raise RuntimeError("MPI wrapper did not resolve to a GNU Fortran driver")
+        components.append(gnu_driver)
+    else:
+        gnu_driver = resolve_gnu_fortran(tokens[0])
+    if gnu_driver is None:
+        raise RuntimeError(
+            f"unsupported Fortran driver or unresolved wrapper: {driver_path}"
+        )
+    if gnu_driver not in components:
+        components.append(gnu_driver)
+
+    version_output = subprocess.check_output(
+        [*command, "--version"], text=True, errors="replace"
+    )
+    if not version_output.strip():
+        raise RuntimeError("configured Fortran driver returned no version identity")
+    frontend_text = subprocess.check_output(
+        [str(gnu_driver), "-print-prog-name=f951"], text=True, errors="replace"
+    ).strip()
+    frontend = Path(frontend_text).resolve()
+    if not frontend_text or not frontend.is_file():
+        raise RuntimeError("GNU Fortran frontend identity could not be resolved")
+    if frontend not in components:
+        components.append(frontend)
     return {
         "configured_variables": variables,
-        "path": str(compiler_path),
-        "sha256": sha256(compiler_path),
-        "version": version,
+        "command": command,
+        "components": [
+            {"path": str(path), "size": path.stat().st_size, "sha256": sha256(path)}
+            for path in components
+        ],
+        "version": version_output.splitlines()[0],
+        "version_output_sha256": sha256_bytes(version_output.encode()),
     }
 
 
@@ -323,8 +422,52 @@ def validate_frozen_oracle(
 ) -> dict[str, object]:
     path = case_source / "oracle.json"
     oracle = cast(dict[str, object], json.loads(path.read_text()))
+    top_keys = {
+        "schema",
+        "description",
+        "source_commit",
+        "workload",
+        "output_hashes",
+        "output_sizes",
+        "dims_sha256",
+    }
+    if set(oracle) != top_keys or type(oracle["schema"]) is not int or oracle["schema"] != 1:
+        raise RuntimeError("unsupported or malformed DELILAH oracle schema")
+    if type(oracle["description"]) is not str:
+        raise RuntimeError("malformed DELILAH oracle description")
+    if oracle["source_commit"] != ORACLE_SOURCE_COMMIT:
+        raise RuntimeError("DELILAH oracle source commit is not the reviewed baseline")
     workload = cast(dict[str, object], oracle["workload"])
-    applied = expected_tstop == float(cast(float, workload["tstop"]))
+    expected_workload = {
+        "nx": 177,
+        "ny": 70,
+        "directions": 9,
+        "random": 0,
+        "tstop": 3800.0,
+        "timesteps": 23743,
+        "values_per_field": 12638,
+    }
+    if set(workload) != set(expected_workload) or any(
+        type(workload[key]) is not type(value) or workload[key] != value
+        for key, value in expected_workload.items()
+    ):
+        raise RuntimeError("malformed DELILAH oracle workload")
+    output_hashes = cast(dict[str, object], oracle["output_hashes"])
+    if set(output_hashes) != set(OUTPUTS) or any(
+        type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+        for value in output_hashes.values()
+    ):
+        raise RuntimeError("malformed DELILAH oracle output hashes")
+    output_sizes = cast(dict[str, object], oracle["output_sizes"])
+    if set(output_sizes) != set(OUTPUTS) or any(
+        type(value) is not int or value <= 0 for value in output_sizes.values()
+    ):
+        raise RuntimeError("malformed DELILAH oracle output sizes")
+    if type(oracle["dims_sha256"]) is not str or re.fullmatch(
+        r"[0-9a-f]{64}", cast(str, oracle["dims_sha256"])
+    ) is None:
+        raise RuntimeError("malformed DELILAH oracle dimensions hash")
+    applied = expected_tstop == workload["tstop"]
     result = {
         "path": str(path),
         "sha256": sha256(path),
@@ -337,6 +480,11 @@ def validate_frozen_oracle(
     first = runs[0]
     validation = cast(dict[str, object], first["validation"])
     observed = {
+        "nx": validation["nx"],
+        "ny": validation["ny"],
+        "directions": validation["directions"],
+        "random": 0,
+        "tstop": expected_tstop,
         "timesteps": first["timesteps"],
         "values_per_field": validation["values_per_field"],
         "output_hashes": first["hashes"],
@@ -344,8 +492,7 @@ def validate_frozen_oracle(
         "dims_sha256": validation["dims_sha256"],
     }
     expected = {
-        "timesteps": workload["timesteps"],
-        "values_per_field": workload["values_per_field"],
+        **workload,
         "output_hashes": oracle["output_hashes"],
         "output_sizes": oracle["output_sizes"],
         "dims_sha256": oracle["dims_sha256"],
@@ -440,6 +587,33 @@ def ensure_consistent(runs: list[dict[str, object]]) -> None:
             raise RuntimeError(f"retained run {index} differs from retained run 1")
 
 
+def assert_identity_unchanged(
+    executable: Path,
+    env: dict[str, str],
+    artifacts: dict[str, object],
+    source_repo: Path,
+    provenance: dict[str, object],
+    runner_repo: Path,
+    runner_provenance: dict[str, object],
+    runner_hash: str,
+    compiler: dict[str, object],
+    case_source: Path,
+    case_hashes: dict[str, str],
+) -> None:
+    if runtime_artifacts(executable, env) != artifacts:
+        raise RuntimeError("runtime artifacts changed across the benchmark")
+    if git_provenance(source_repo) != provenance:
+        raise RuntimeError("source tree changed across the benchmark")
+    if git_provenance(runner_repo) != runner_provenance:
+        raise RuntimeError("runner tree changed across the benchmark")
+    if sha256(Path(__file__).resolve()) != runner_hash:
+        raise RuntimeError("benchmark runner changed across the benchmark")
+    if compiler_provenance(source_repo) != compiler:
+        raise RuntimeError("compiler identity changed across the benchmark")
+    if input_hashes(case_source) != case_hashes:
+        raise RuntimeError("source case changed across the benchmark")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     repo = Path(__file__).resolve().parents[1]
@@ -483,6 +657,13 @@ def main() -> int:
     case_hashes = input_hashes(case_source)
 
     work_root = args.work_root.resolve()
+    output_path = args.output.resolve() if args.output else work_root / "result.json"
+    if work_root.is_relative_to(source_repo) or work_root.is_relative_to(repo):
+        parser.error("--work-root must be outside the source and runner repositories")
+    if output_path.is_relative_to(source_repo) or output_path.is_relative_to(repo):
+        parser.error("--output must be outside the source and runner repositories")
+    if output_path.exists():
+        parser.error(f"output already exists; choose a fresh path: {output_path}")
     if work_root.exists():
         parser.error(f"work root already exists; choose a fresh path: {work_root}")
     work_root.mkdir(parents=True)
@@ -504,18 +685,10 @@ def main() -> int:
 
     ensure_consistent(retained)
     oracle = validate_frozen_oracle(case_source, expected_tstop, retained)
-    if runtime_artifacts(executable, env) != artifacts:
-        raise RuntimeError("runtime artifacts changed across the benchmark")
-    if git_provenance(source_repo) != provenance:
-        raise RuntimeError("source tree changed across the benchmark")
-    if git_provenance(repo) != runner_provenance:
-        raise RuntimeError("runner tree changed across the benchmark")
-    if sha256(Path(__file__).resolve()) != runner_hash:
-        raise RuntimeError("benchmark runner changed across the benchmark")
-    if compiler_provenance(source_repo) != compiler:
-        raise RuntimeError("compiler identity changed across the benchmark")
-    if input_hashes(case_source) != case_hashes:
-        raise RuntimeError("source case changed across the benchmark")
+    assert_identity_unchanged(
+        executable, env, artifacts, source_repo, provenance, repo,
+        runner_provenance, runner_hash, compiler, case_source, case_hashes,
+    )
     walls = [cast(float, run["wall_seconds"]) for run in retained]
     relevant_environment = {
         key: value
@@ -567,9 +740,16 @@ def main() -> int:
         "timesteps": retained[0]["timesteps"],
     }
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(encoded)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
+    if temporary_output.exists():
+        raise RuntimeError(f"temporary output already exists: {temporary_output}")
+    temporary_output.write_text(encoded)
+    assert_identity_unchanged(
+        executable, env, artifacts, source_repo, provenance, repo,
+        runner_provenance, runner_hash, compiler, case_source, case_hashes,
+    )
+    os.replace(temporary_output, output_path)
     print(encoded, end="")
     return 0
 

@@ -15,7 +15,8 @@ From a configured and built source tree, run:
 
 ```sh
 python3 tools/benchmark_delilah.py --warmups 1 --runs 3 \
-  --work-root /tmp/xbeach-delilah-$(date +%s) --output result.json
+  --work-root /tmp/xbeach-delilah-$(date +%s) \
+  --output /tmp/xbeach-delilah-result-$(date +%s).json
 ```
 
 For a quick harness check without changing the committed workload:
@@ -39,6 +40,11 @@ workload, the runner also fails unless timesteps, dimensions, sizes, and all fou
 field hashes match `oracle.json`, frozen from the clean first current-compiler
 build-compatible commit (`8ccf245`). Short smoke overrides record that the
 oracle was not applied and cannot be mistaken for full regression evidence.
+Compiler provenance is mandatory and includes the configured command, wrappers,
+underlying driver, GNU Fortran frontend where available, flags, version output,
+and hashes. Result publication is rejected inside either reviewed repository;
+an external temporary result is written, identities are sealed again, and the
+file is then atomically published.
 
 Promotion evidence should come from a clean tree; dirty-tree reports are for
 candidate experiments. Compare performance only when the workload, compiler,
