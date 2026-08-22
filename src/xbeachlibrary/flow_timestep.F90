@@ -36,6 +36,7 @@ contains
       use flow_secondorder_module
       use nonh_module
       use bedroughness_module
+      use vsm_interfaces, only: vsm_u_XB
 
       IMPLICIT NONE
 

@@ -1,3 +1,30 @@
+module vsm_interfaces
+   implicit none
+   private
+   public :: vsm_u_XB, stokes
+
+   interface
+      subroutine vsm_u_XB(ue,ve,h,ks,rho,tauwx,tauwy,theta,urms,omega,k,diss, &
+                          e,er,fcvisc,facdel,ws,fw,facdf,swglm,n,sigz,uz,vz, &
+                          ustz,nutz,ue_sed,ve_sed)
+         implicit none
+         integer, intent(in) :: swglm,n
+         double precision, intent(in) :: ue,ve,h,ks,rho,tauwx,tauwy,theta
+         double precision, intent(in) :: urms,omega,k,diss,e,er,fcvisc,facdel
+         double precision, intent(in) :: ws,fw,facdf
+         double precision, intent(out) :: sigz(n),uz(n),vz(n),ustz(n),nutz(n)
+         double precision, intent(out) :: ue_sed,ve_sed
+      end subroutine vsm_u_XB
+
+      subroutine stokes(hrms,omega,k,h,z,ustokes,order_stk)
+         implicit none
+         integer, intent(in) :: order_stk
+         double precision, intent(in) :: hrms,omega,k,h,z
+         double precision, intent(out) :: ustokes
+      end subroutine stokes
+   end interface
+end module vsm_interfaces
+
 subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
                        rho   ,tauwx ,tauwy ,theta ,               &
                        urms  ,omega ,k     ,diss  ,               &
@@ -6,50 +33,51 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
                        uz    ,vz    ,ustz  ,nutz  ,               &
                        ue_sed,ve_sed )  
     
+   use vsm_interfaces, only: stokes
    implicit none
 
 !  Input/output parameters      
-   real*8,  intent(in)   :: ue                ! depth-averaged eulerian velocity, ksi comp
-   real*8,  intent(in)   :: ve                ! depth-averaged eulerian velocity, eta comp
-   real*8,  intent(in)   :: h                 ! water depth
-   real*8,  intent(in)   :: ks                ! nikuradse roughness
-   real*8,  intent(in)   :: rho               ! density
-   real*8,  intent(in)   :: tauwx             ! wind shear stress, ksi comp
-   real*8,  intent(in)   :: tauwy             ! wind shear stress, eta comp
-   real*8,  intent(in)   :: theta             ! wave angle w.r.t. grid ksi-direction
-   real*8,  intent(in)   :: urms              ! orbital velocity 
-   real*8,  intent(in)   :: omega             ! angular peak frequency
-   real*8,  intent(in)   :: k                 ! wave number
-   real*8,  intent(in)   :: diss              ! breaking dissipation
-   real*8,  intent(in)   :: e                 ! wave energy
-   real*8,  intent(in)   :: er                ! roller energy
-   real*8,  intent(in)   :: fcvisc            ! calibration factor breaking-induced viscosity (~0.05)
-   real*8,  intent(in)   :: facdel            ! calibration factor bbl thickness (~20)
-   real*8,  intent(in)   :: facdf             ! calibration factor bottom dissipation (~1)
-   real*8,  intent(in)   :: ws                ! average fall velocity
-   real*8,  intent(in)   :: fw                ! wave friction coefficient
+   double precision,  intent(in)   :: ue                ! depth-averaged eulerian velocity, ksi comp
+   double precision,  intent(in)   :: ve                ! depth-averaged eulerian velocity, eta comp
+   double precision,  intent(in)   :: h                 ! water depth
+   double precision,  intent(in)   :: ks                ! nikuradse roughness
+   double precision,  intent(in)   :: rho               ! density
+   double precision,  intent(in)   :: tauwx             ! wind shear stress, ksi comp
+   double precision,  intent(in)   :: tauwy             ! wind shear stress, eta comp
+   double precision,  intent(in)   :: theta             ! wave angle w.r.t. grid ksi-direction
+   double precision,  intent(in)   :: urms              ! orbital velocity 
+   double precision,  intent(in)   :: omega             ! angular peak frequency
+   double precision,  intent(in)   :: k                 ! wave number
+   double precision,  intent(in)   :: diss              ! breaking dissipation
+   double precision,  intent(in)   :: e                 ! wave energy
+   double precision,  intent(in)   :: er                ! roller energy
+   double precision,  intent(in)   :: fcvisc            ! calibration factor breaking-induced viscosity (~0.05)
+   double precision,  intent(in)   :: facdel            ! calibration factor bbl thickness (~20)
+   double precision,  intent(in)   :: facdf             ! calibration factor bottom dissipation (~1)
+   double precision,  intent(in)   :: ws                ! average fall velocity
+   double precision,  intent(in)   :: fw                ! wave friction coefficient
    integer, intent(in)   :: swGLM             ! switch to use GLM formulation (1) or not (0)
    integer, intent(in)   :: n                 ! number of vertical layers
-   real*8,  intent(out)  :: sigz(n)           ! vertical sigma grid (0 at bottom, 1 at surface)
-   real*8,  intent(out)  :: uz(n)             ! vertically distributed velocity, ksi comp.
-   real*8,  intent(out)  :: vz(n)             ! vertically distributed velocity, eta comp.
-   real*8,  intent(out)  :: ustz(n)           ! vertically distributed stokes drift in wave direction
-   real*8,  intent(out)  :: nutz(n)           ! vertically distributed viscosity
-   real*8,  intent(out)  :: ue_sed            ! advection velocity sediment (ksi-dir)
-   real*8,  intent(out)  :: ve_sed            ! advection velocity sediment (eta-dir)
+   double precision,  intent(out)  :: sigz(n)           ! vertical sigma grid (0 at bottom, 1 at surface)
+   double precision,  intent(out)  :: uz(n)             ! vertically distributed velocity, ksi comp.
+   double precision,  intent(out)  :: vz(n)             ! vertically distributed velocity, eta comp.
+   double precision,  intent(out)  :: ustz(n)           ! vertically distributed stokes drift in wave direction
+   double precision,  intent(out)  :: nutz(n)           ! vertically distributed viscosity
+   double precision,  intent(out)  :: ue_sed            ! advection velocity sediment (ksi-dir)
+   double precision,  intent(out)  :: ve_sed            ! advection velocity sediment (eta-dir)
 !  Local variables      
-   real*8     :: kappa,nut1,nut2,nut3,g,uorb
-   real*8     :: nutda,nusur,nutb,numin
-   real*8     :: hrms,z0,cw,aorb,delta,phiw
-   real*8     :: Df,Dfx,Dfy,tauwav,Qw,Qwe,Qwx,Qwy
-   real*8     :: ustokes,tausx,tausy,tswi,cf,sigma0,uold
-   real*8     :: tbnw,dhdy,dhdx,sigmas,phis,phinub,sigs1
-   real*8     :: facA,facA1,facG,facG1,facH,facH1
-   real*8     :: facCx,facCy,facBx,facBy,facC1x,facC1y,facB1x,facB1y
-   real*8     :: uxmean,uymean,uabs,err,sigmat,facln1,facln2
-   real*8     :: vut,vvt,vud,vvd,Qstok,difstok,sigma,hd
-   real*8     :: ustar,ast,rousepar
-   real*8     :: crel(n),dsig(n)
+   double precision     :: kappa,nut1,nut2,nut3,g,uorb
+   double precision     :: nutda,nusur,nutb,numin
+   double precision     :: hrms,z0,cw,aorb,delta,phiw
+   double precision     :: Df,Dfx,Dfy,tauwav,Qw,Qwe,Qwx,Qwy
+   double precision     :: ustokes,tausx,tausy,tswi,cf,sigma0,uold
+   double precision     :: tbnw,dhdy,dhdx,sigmas,phis,phinub,sigs1
+   double precision     :: facA,facA1,facG,facG1,facH,facH1
+   double precision     :: facCx,facCy,facBx,facBy,facC1x,facC1y,facB1x,facB1y
+   double precision     :: uxmean,uymean,uabs,err,sigmat,facln1,facln2
+   double precision     :: vut,vvt,vud,vvd,Qstok,difstok,sigma,hd
+   double precision     :: ustar,ast,rousepar
+   double precision     :: crel(n),dsig(n)
    integer    :: order_st=2,itmax,iter,i
 !-------------------------------------------------------------------
 !- Modified version Dirk-Jan Walstra (08-06-2007 --> copied from V205)
@@ -326,10 +354,12 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
 end subroutine vsm_u_XB
    
 subroutine stokes (hrms,omega,k,h,z,ustokes,order_stk)
-   real*8              :: hrms,omega,k,h,z,ustokes
-   integer             :: order_stk
+   implicit none
+   double precision, intent(in)  :: hrms,omega,k,h,z
+   double precision, intent(out) :: ustokes
+   integer, intent(in)           :: order_stk
    
-   real*8              :: a,f3,s
+   double precision              :: a,f3,s
    a=hrms/2.
    if (omega.gt.0.) then
      if (order_stk.eq.2) then
