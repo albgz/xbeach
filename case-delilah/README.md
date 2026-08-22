@@ -25,13 +25,18 @@ python3 tools/benchmark_delilah.py --tstop 20 --runs 2 \
   --work-root /tmp/xbeach-delilah-smoke-$(date +%s)
 ```
 
-The runner creates a clean directory per run, measures wall time, records the
-model-reported duration and timestep count, hashes every retained field, and
-fails if retained runs do not agree. It validates `dims.dat`, field dimensions,
-FP64 value counts, finiteness, and normal termination. Its JSON also records
-the source and runner trees, working-diff identity, input/executable/library
-hashes, dynamic dependencies, configured compiler/flags, CPU affinity, load,
-warnings, and host. Existing work roots are rejected rather than overwritten.
+The runner creates a clean directory per run and emits a schema-4 JSON record.
+It fails closed when a result root is reused; the frozen `177 x 70 x 9`,
+`random=0`, Fortran-output contract or requested output time is not observed;
+outputs are missing, non-finite, wrongly sized, or hash-inconsistent; XBeach
+terminates abnormally; or an unclassified warning appears. It records both the
+source fixture and effective per-run input hashes, so `--tstop` smoke overrides
+cannot be confused with the full workload. Before and after every sample it
+binds the clean/dirty source and runner trees, runner, compiler, ELF executable,
+actually loaded `libxbeach.so`, and dynamic dependency closure. Every retained
+science field is hashed with full SHA-256.
+
 Promotion evidence should come from a clean tree; dirty-tree reports are for
 candidate experiments. Compare performance only when the workload, compiler,
-host, timestep count, output sizes, and all four hashes match.
+host, timestep count, output sizes, exact runtime artifacts, and all four hashes
+match.

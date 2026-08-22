@@ -99,10 +99,31 @@ def compiler_provenance(source_repo: Path) -> dict[str, object]:
     }
 
 
-def dynamic_dependencies(executable: Path) -> list[dict[str, object]]:
+def runtime_executable(launcher: Path) -> Path:
+    candidate = launcher.parent / ".libs" / launcher.name
+    if launcher.read_bytes()[:4] == b"\x7fELF":
+        return launcher
+    if candidate.is_file() and candidate.read_bytes()[:4] == b"\x7fELF":
+        return candidate.resolve()
+    raise RuntimeError(f"cannot resolve an ELF XBeach executable from {launcher}")
+
+
+def runtime_environment(executable: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    library_dir = executable.parents[2] / "xbeachlibrary" / ".libs"
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        env[key] = os.pathsep.join(
+            item for item in (str(library_dir), env.get(key, "")) if item
+        )
+    return env
+
+
+def dynamic_dependencies(
+    executable: Path, env: dict[str, str]
+) -> list[dict[str, object]]:
     if shutil.which("ldd") is None:
         return []
-    output = subprocess.check_output(["ldd", str(executable)], text=True)
+    output = subprocess.check_output(["ldd", str(executable)], text=True, env=env)
     paths: set[Path] = set()
     for line in output.splitlines():
         match = re.search(r"=>\s+(/\S+)", line)
@@ -116,6 +137,22 @@ def dynamic_dependencies(executable: Path) -> list[dict[str, object]]:
         {"path": str(path), "size": path.stat().st_size, "sha256": sha256(path)}
         for path in sorted(paths)
     ]
+
+
+def runtime_artifacts(executable: Path, env: dict[str, str]) -> dict[str, object]:
+    dependencies = dynamic_dependencies(executable, env)
+    loaded = [
+        item for item in dependencies if Path(str(item["path"])).name.startswith("libxbeach.so")
+    ]
+    if len(loaded) != 1:
+        raise RuntimeError(f"expected one loaded libxbeach shared object, found {len(loaded)}")
+    return {
+        "executable": str(executable),
+        "executable_size": executable.stat().st_size,
+        "executable_sha256": sha256(executable),
+        "dynamic_dependencies": dependencies,
+        "loaded_library": loaded[0],
+    }
 
 
 def cpu_model() -> str:
@@ -140,6 +177,63 @@ def replace_scalar(text: str, key: str, value: str) -> str:
     if count != 1:
         raise ValueError(f"expected one {key}= entry, found {count}")
     return updated
+
+
+def parameter_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(errors="replace").splitlines():
+        match = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S+)", line)
+        if match:
+            values[match.group(1).lower()] = match.group(2)
+    return values
+
+
+def validate_effective_parameters(case_dir: Path, expected_tstop: float) -> dict[str, object]:
+    values = parameter_values(case_dir / "params.txt")
+    required = ("nx", "ny", "thetamin", "thetamax", "dtheta", "random", "tstart", "tstop", "outputformat")
+    missing = [key for key in required if key not in values]
+    if missing:
+        raise RuntimeError(f"effective params.txt lacks: {', '.join(missing)}")
+    nx, ny = int(values["nx"]), int(values["ny"])
+    dtheta = float(values["dtheta"])
+    directions = int(round((float(values["thetamax"]) - float(values["thetamin"])) / dtheta))
+    observed = {
+        "nx": nx,
+        "ny": ny,
+        "directions": directions,
+        "random": int(values["random"]),
+        "tstart": float(values["tstart"]),
+        "tstop": float(values["tstop"]),
+        "outputformat": values["outputformat"].lower(),
+    }
+    expected = {
+        "nx": 177,
+        "ny": 70,
+        "directions": 9,
+        "random": 0,
+        "tstart": expected_tstop,
+        "tstop": expected_tstop,
+        "outputformat": "fortran",
+    }
+    if observed != expected:
+        raise RuntimeError(f"effective workload differs: observed={observed}, expected={expected}")
+    return observed
+
+
+def validate_warnings(path: Path) -> list[str]:
+    lines = [line.strip() for line in path.read_text(errors="replace").splitlines() if line.strip()]
+    allowed = (
+        re.compile(r"^Warning: Specification of instat using parameter 'wbctype'$"),
+        re.compile(r"^(morstart|tintg|tintp|tintm)\s*=.*Warning: value > recommended value of"),
+        re.compile(r"^Warning: Lax Wendroff .* scheme is not supported, changed$"),
+        re.compile(r"^to Warming and Beam \[scheme=SCHEME_WARMBEAM\]$"),
+        re.compile(r"^Unknown, unused or multiple statements of parameter[A-Z0-9_]+ inparams\.txt$"),
+        re.compile(r"^Warning: shallow water so long wave variance is reduced using par%nmax$"),
+    )
+    unknown = [line for line in lines if not any(pattern.match(line) for pattern in allowed)]
+    if unknown:
+        raise RuntimeError(f"unclassified XBeach warnings: {unknown}")
+    return lines
 
 
 def prepare_case(source: Path, destination: Path, tstop: float | None) -> None:
@@ -174,7 +268,8 @@ def read_native_doubles(path: Path) -> array.array[float]:
     return values
 
 
-def validate_outputs(case_dir: Path) -> dict[str, object]:
+def validate_outputs(case_dir: Path, expected_tstop: float) -> dict[str, object]:
+    effective = validate_effective_parameters(case_dir, expected_tstop)
     dims_path = case_dir / "dims.dat"
     if not dims_path.is_file():
         raise RuntimeError("missing output metadata: dims.dat")
@@ -184,6 +279,10 @@ def validate_outputs(case_dir: Path) -> dict[str, object]:
     nx, ny, directions = (int(dims[1]), int(dims[2]), int(dims[3]))
     if any(float(int(value)) != value for value in dims[:10]):
         raise RuntimeError("dims.dat integer metadata contains non-integral values")
+    observed = (nx, ny, directions, dims[-1])
+    expected = (177, 70, 9, expected_tstop)
+    if observed != expected:
+        raise RuntimeError(f"output metadata differs: observed={observed}, expected={expected}")
     expected_values = (nx + 1) * (ny + 1)
     for name in OUTPUTS:
         values = read_native_doubles(case_dir / name)
@@ -194,7 +293,11 @@ def validate_outputs(case_dir: Path) -> dict[str, object]:
         if not all(math.isfinite(value) for value in values):
             raise RuntimeError(f"{name} contains a non-finite value")
     warning_path = case_dir / "XBwarning.txt"
+    if not warning_path.is_file():
+        raise RuntimeError("missing XBwarning.txt")
+    warnings = validate_warnings(warning_path)
     return {
+        "effective_parameters": effective,
         "dims_sha256": sha256(dims_path),
         "dims_values": list(dims),
         "nx": nx,
@@ -202,22 +305,30 @@ def validate_outputs(case_dir: Path) -> dict[str, object]:
         "directions": directions,
         "output_time": dims[-1],
         "values_per_field": expected_values,
-        "warning_sha256": sha256(warning_path) if warning_path.is_file() else None,
-        "warning_lines": len(warning_path.read_text(errors="replace").splitlines())
-        if warning_path.is_file()
-        else 0,
+        "warning_sha256": sha256(warning_path),
+        "warning_lines": warnings,
     }
 
 
-def run_once(executable: Path, case_dir: Path) -> dict[str, object]:
-    env = os.environ.copy()
-    library_dir = executable.parents[2] / "xbeachlibrary" / ".libs"
-    env["LD_LIBRARY_PATH"] = os.pathsep.join(
-        item for item in (str(library_dir), env.get("LD_LIBRARY_PATH", "")) if item
-    )
-    env["DYLD_LIBRARY_PATH"] = os.pathsep.join(
-        item for item in (str(library_dir), env.get("DYLD_LIBRARY_PATH", "")) if item
-    )
+def input_hashes(case_dir: Path) -> dict[str, str]:
+    return {
+        str(path.relative_to(case_dir)): sha256(path)
+        for path in sorted(case_dir.iterdir())
+        if path.is_file()
+    }
+
+
+def run_once(
+    executable: Path,
+    case_dir: Path,
+    env: dict[str, str],
+    expected_tstop: float,
+    expected_artifacts: dict[str, object],
+) -> dict[str, object]:
+    effective_inputs = input_hashes(case_dir)
+    artifacts_before = runtime_artifacts(executable, env)
+    if artifacts_before != expected_artifacts:
+        raise RuntimeError("runtime artifacts changed before a sample")
 
     started_at = datetime.now(timezone.utc).isoformat()
     load_before = load_average()
@@ -247,10 +358,15 @@ def run_once(executable: Path, case_dir: Path) -> dict[str, object]:
     missing = [name for name in OUTPUTS if not (case_dir / name).is_file()]
     if missing:
         raise RuntimeError(f"missing output files: {', '.join(missing)}")
-    validation = validate_outputs(case_dir)
+    validation = validate_outputs(case_dir, expected_tstop)
+    artifacts_after = runtime_artifacts(executable, env)
+    if artifacts_after != artifacts_before:
+        raise RuntimeError("runtime artifacts changed during a sample")
 
     return {
         "started_at": started_at,
+        "effective_input_hashes": effective_inputs,
+        "runtime_artifacts": artifacts_before,
         "load_average_before": load_before,
         "load_average_after": load_average(),
         "wall_seconds": wall_seconds,
@@ -268,9 +384,18 @@ def ensure_consistent(runs: list[dict[str, object]]) -> None:
         runs[0]["hashes"],
         runs[0]["sizes"],
         runs[0]["validation"],
+        runs[0]["effective_input_hashes"],
+        runs[0]["runtime_artifacts"],
     )
     for index, run in enumerate(runs[1:], start=2):
-        current = (run["timesteps"], run["hashes"], run["sizes"], run["validation"])
+        current = (
+            run["timesteps"],
+            run["hashes"],
+            run["sizes"],
+            run["validation"],
+            run["effective_input_hashes"],
+            run["runtime_artifacts"],
+        )
         if current != reference:
             raise RuntimeError(f"retained run {index} differs from retained run 1")
 
@@ -299,13 +424,23 @@ def main() -> int:
     if args.runs < 1 or args.warmups < 0:
         parser.error("--runs must be at least 1 and --warmups cannot be negative")
 
-    executable = args.executable.resolve()
-    if not executable.is_file():
-        parser.error(f"executable does not exist: {executable}")
+    launcher = args.executable.resolve()
+    if not launcher.is_file():
+        parser.error(f"executable does not exist: {launcher}")
+    executable = runtime_executable(launcher)
     source_repo = discover_git_root(executable.parent)
     case_source = repo / "case-delilah"
     if not (case_source / "params.txt").is_file():
         parser.error(f"benchmark input is missing: {case_source / 'params.txt'}")
+
+    expected_tstop = args.tstop if args.tstop is not None else 3800.0
+    env = runtime_environment(executable)
+    artifacts = runtime_artifacts(executable, env)
+    provenance = git_provenance(source_repo)
+    runner_provenance = git_provenance(repo)
+    runner_hash = sha256(Path(__file__).resolve())
+    compiler = compiler_provenance(source_repo)
+    case_hashes = input_hashes(case_source)
 
     work_root = args.work_root.resolve()
     if work_root.exists():
@@ -318,7 +453,7 @@ def main() -> int:
         number = ordinal + 1 if label == "warmup" else ordinal - args.warmups + 1
         run_dir = work_root / f"{label}-{number}"
         prepare_case(case_source, run_dir, args.tstop)
-        result = run_once(executable, run_dir)
+        result = run_once(executable, run_dir, env, expected_tstop, artifacts)
         print(
             f"{label} {number}: {result['wall_seconds']:.6f} s, "
             f"{result['timesteps']} timesteps",
@@ -328,38 +463,37 @@ def main() -> int:
             retained.append(result)
 
     ensure_consistent(retained)
+    if runtime_artifacts(executable, env) != artifacts:
+        raise RuntimeError("runtime artifacts changed across the benchmark")
+    if git_provenance(source_repo) != provenance:
+        raise RuntimeError("source tree changed across the benchmark")
+    if git_provenance(repo) != runner_provenance:
+        raise RuntimeError("runner tree changed across the benchmark")
+    if sha256(Path(__file__).resolve()) != runner_hash:
+        raise RuntimeError("benchmark runner changed across the benchmark")
+    if compiler_provenance(source_repo) != compiler:
+        raise RuntimeError("compiler identity changed across the benchmark")
+    if input_hashes(case_source) != case_hashes:
+        raise RuntimeError("source case changed across the benchmark")
     walls = [cast(float, run["wall_seconds"]) for run in retained]
-    library_dir = executable.parents[2] / "xbeachlibrary" / ".libs"
-    libraries = sorted(library_dir.glob("libxbeach.*"))
-    linked_library = next((path.resolve() for path in libraries if path.is_symlink()), None)
-    case_hashes = {
-        str(path.relative_to(case_source)): sha256(path)
-        for path in sorted(case_source.iterdir())
-        if path.is_file()
-    }
     relevant_environment = {
         key: value
         for key, value in sorted(os.environ.items())
         if key.startswith(("OMP_", "GOMP_", "KMP_"))
         or key in {"LANG", "LC_ALL", "LD_PRELOAD"}
     }
-    provenance = git_provenance(source_repo)
-    runner_provenance = git_provenance(repo)
     output_validation = cast(dict[str, object], retained[0]["validation"])
     report = {
-        "schema": 3,
+        "schema": 4,
         "measured_at": datetime.now(timezone.utc).isoformat(),
         "source_commit": provenance["commit"],
         "source_tree": provenance,
         "runner_tree": runner_provenance,
-        "executable": str(executable),
-        "executable_sha256": sha256(executable),
-        "linked_library": str(linked_library) if linked_library else None,
-        "linked_library_sha256": sha256(linked_library) if linked_library else None,
-        "dynamic_dependencies": dynamic_dependencies(executable),
-        "runner_sha256": sha256(Path(__file__).resolve()),
+        "launcher": str(launcher),
+        "runtime_artifacts": artifacts,
+        "runner_sha256": runner_hash,
         "command": [str(Path(__file__).resolve()), *sys.argv[1:]],
-        "compiler": compiler_provenance(source_repo),
+        "compiler": compiler,
         "host": {
             "platform": platform.platform(),
             "machine": platform.machine(),
@@ -371,13 +505,14 @@ def main() -> int:
         },
         "environment": relevant_environment,
         "case_input_hashes": case_hashes,
+        "effective_input_hashes": retained[0]["effective_input_hashes"],
         "workload": {
             "case": "DELILAH",
             "nx": output_validation["nx"],
             "ny": output_validation["ny"],
             "directions": output_validation["directions"],
             "random": 0,
-            "tstop": args.tstop if args.tstop is not None else 3800.0,
+            "tstop": expected_tstop,
             "output_time": output_validation["output_time"],
         },
         "warmups": args.warmups,
