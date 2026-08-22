@@ -9,8 +9,9 @@ def rank(var):
     return len(var["shape"])
 
 def dimarray(var):
-    """combinine the shape text into dimension"""
-    parts = ["'%-20s'" % (dim,) for dim in var["shape"]]
+    """combine the shape text into a conformable character array."""
+    width = max(20, max(len(str(dim)) for dim in var["shape"]))
+    parts = [("'%%-%ds'" % width) % (dim,) for dim in var["shape"]]
     txt = "(/ {0} /)".format(",".join(parts))
     return txt
 

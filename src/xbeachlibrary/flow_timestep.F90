@@ -278,6 +278,10 @@ contains
       if (par%viscosity==0) then
           s%nuh = 0
       endif
+#ifdef USEMPI
+      ! The viscosity stencils below read one cell across internal M boundaries.
+      call xmpi_shift_ee(s%nuh)
+#endif
       !  
       do j=j1,max(s%ny,1)
          do i=2,s%nx

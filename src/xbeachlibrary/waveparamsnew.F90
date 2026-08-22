@@ -1942,6 +1942,28 @@ contains
       allocate(wp%Sfinterpq(s%ny+1,wp%K))
       allocate(wp%Hm0interp(s%ny+1))
 
+      ! Phase-resolution selection depends only on the generated frequency
+      ! components, not on the offshore-grid index. Allocate and initialise it
+      ! once; reallocating the pointer for every offshore point leaked all but
+      ! the final target.
+      allocate(wp%PRindex(wp%K))
+      if (nonhspectrum==1) then
+         ! all components phase-resolved
+         wp%PRindex = 1
+      else
+         if(swkhmin>0.d0) then
+            ! some components resolved, some not
+            where(wp%kgen*wp%h0 >= swkhmin)
+               wp%PRindex = 0
+            elsewhere
+               wp%PRindex = 1
+            endwhere
+         else
+            ! no components phase-resolved
+            wp%PRindex = 0
+         endif
+      endif
+
       ! where necessary, interpolate Sf of each spectrum location
       ! to the current grid cell, and use this to calculate A
       do i=1,s%ny+1
@@ -2016,26 +2038,6 @@ contains
 
          wp%Hm0interp(i) = 4*sqrt(sum(wp%Sfinterp(i,:))*wp%dfgen)
 
-         ! determine if these components will be pahse-resolved, or resolved in the wave energy balance
-         allocate(wp%PRindex(wp%K))
-         if (nonhspectrum==1) then
-            ! all components phase-resolved
-            wp%PRindex = 1
-         else
-            if(swkhmin>0.d0) then 
-               ! some components resolved, some not
-               where(wp%kgen*wp%h0 >= swkhmin)
-                  wp%PRindex = 0
-               elsewhere
-                  wp%PRindex = 1
-               endwhere
-            else
-               ! no components phase-resolved
-               wp%PRindex = 0
-            endif
-         endif
-         
-         
       enddo ! i=1,s%ny+1
 
    end subroutine generate_wave_train_properties_per_offshore_point

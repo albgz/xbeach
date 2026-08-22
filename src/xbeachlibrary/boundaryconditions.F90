@@ -1285,6 +1285,12 @@ contains
          ! Can we do this more efficiently?
          s%windnv = windynow*dcos(s%alfav-0.5d0*par%px) - windxnow*dsin(s%alfav-0.5d0*par%px)
       endif
+#ifdef USEMPI
+      ! Flow boundary updates must be visible in adjacent M-domain halos before
+      ! the Smagorinsky and momentum stencils consume uu and vv.
+      call xmpi_shift_uu(s%uu)
+      call xmpi_shift_vv(s%vv)
+#endif
    end subroutine flow_bc
 
    function flow_lat_bc(s,par,bctype,jbc,jn,udvdxb,vdvdyb,viscvb) result(vbc)

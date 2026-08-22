@@ -46,7 +46,7 @@ module variables
   double precision, allocatable, target :: zb(:,:)          !< [m] bed level {"shape": ["s%nx+1", "s%ny+1"], "standard_name": "altitude", "broadcast": "d"}
   double precision, allocatable, target :: zb0(:,:)         !< [m] initial bed level {"shape": ["s%nx+1", "s%ny+1"], "standard_name": "altitude", "broadcast": "d"}
   double precision, allocatable, target :: theta(:)         !< [rad] wave angles directional distribution w.r.t. comp. x-axis {"shape": ["s%ntheta"], "standard_name": "sea_surface_wind_wave_to_direction", "broadcast": "b"}
-  double precision, allocatable, target :: theta_s(:)       !< [rad] wave angles directional distribution w.r.t. comp. x-axis {"shape": ["s%ntheta_s"], "standard_name": "sea_surface_wind_wave_to_direction", "broadcast": "b"}  
+  double precision, allocatable, target :: theta_s(:)       !< [rad] wave angles directional distribution w.r.t. comp. x-axis {"shape": ["max(s%ntheta_s,s%ntheta)"], "standard_name": "sea_surface_wind_wave_to_direction", "broadcast": "b"}
   integer,                       target :: ntheta           !< [-] number of wave direction bins {"shape": [], "standard_name": "", "broadcast": "b"}
   integer,                       target :: ntheta_s         !< [-] number of wave direction bins {"shape": [], "standard_name": "", "broadcast": "b"}
   double precision,              target :: dtheta           !< [rad] wave direction bin size {"shape": [], "standard_name": "", "broadcast": "b"}
@@ -75,9 +75,9 @@ module variables
   double precision, allocatable, target :: cgy_s(:,:,:)     !< [m/s] group velocity, y-component {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "", "broadcast": "d"}
   double precision, allocatable, target :: ctheta_s(:,:,:)  !< [rad/s] wave celerity theta-direction (refraction) {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "", "broadcast": "d"}
   double precision, allocatable, target :: ee_s(:,:,:)      !< [J/m2/rad] directionally distributed wave energy {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "", "broadcast": "d"}
-  double precision, allocatable, target :: thet_s(:,:,:)    !< [rad] wave angles {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "sea_surface_wind_wave_to_direction", "broadcast": "d"}
-  double precision, allocatable, target :: costh_s(:,:,:)   !< [-] cos of wave angles relative to grid direction {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "", "broadcast": "d"}
-  double precision, allocatable, target :: sinth_s(:,:,:)   !< [-] sin of wave angles relative to grid direction {"shape": ["s%nx+1", "s%ny+1", "s%ntheta_s"], "standard_name": "", "broadcast": "d"}
+  double precision, allocatable, target :: thet_s(:,:,:)    !< [rad] wave angles {"shape": ["s%nx+1", "s%ny+1", "max(s%ntheta_s,s%ntheta)"], "standard_name": "sea_surface_wind_wave_to_direction", "broadcast": "d"}
+  double precision, allocatable, target :: costh_s(:,:,:)   !< [-] cos of wave angles relative to grid direction {"shape": ["s%nx+1", "s%ny+1", "max(s%ntheta_s,s%ntheta)"], "standard_name": "", "broadcast": "d"}
+  double precision, allocatable, target :: sinth_s(:,:,:)   !< [-] sin of wave angles relative to grid direction {"shape": ["s%nx+1", "s%ny+1", "max(s%ntheta_s,s%ntheta)"], "standard_name": "", "broadcast": "d"}
   double precision, allocatable, target :: k(:,:)           !< [rad/m] wave number {"shape": ["s%nx+1", "s%ny+1"], "standard_name": "", "broadcast": "d"}
   double precision, allocatable, target :: c(:,:)           !< [m/s] wave celerity {"shape": ["s%nx+1", "s%ny+1"], "standard_name": "", "broadcast": "d"}
   double precision, allocatable, target :: cg(:,:)          !< [m/s] group velocity {"shape": ["s%nx+1", "s%ny+1"], "standard_name": "", "broadcast": "d"}

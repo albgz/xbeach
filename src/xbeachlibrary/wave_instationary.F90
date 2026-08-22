@@ -173,6 +173,13 @@ contains
       ! split wave velocities in wave grid directions theta
       call compute_wave_direction_velocities(s,par,1,dhdx,dhdy,dudx,dudy,dvdx,dvdy,sinh2kh)
       !
+      ! Refresh directional-energy overlap cells before the second-order
+      ! advection stencils consume them.
+#ifdef USEMPI
+      call xmpi_shift_ee(s%ee)
+      call xmpi_shift_ee(s%rr)
+#endif
+
       ! transform to wave action
       !
       do itheta = 1,s%ntheta
@@ -397,6 +404,11 @@ contains
       s%E  = sum(s%ee,3)*s%dtheta
       s%R  = sum(s%rr,3)*s%dtheta
       s%DR = sum(drr,3)*s%dtheta
+#ifdef USEMPI
+      ! Flow differentiates DR at subdomain edges to compute roller-induced
+      ! viscosity, so publish the integrated dissipation before flow starts.
+      call xmpi_shift_ee(s%DR)
+#endif
       s%H  = sqrt(s%E/par%rhog8)
 
       !
@@ -504,7 +516,6 @@ contains
       if(xmpi_isright.and. s%ny>0) then
          s%ust(:,s%ny+1) = s%ust(:,s%ny)
       endif
-
    end subroutine wave_instationary
 
 end module wave_instationary_module

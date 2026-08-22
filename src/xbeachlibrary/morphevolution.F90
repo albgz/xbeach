@@ -289,7 +289,7 @@ contains
             endif
             uev_sed(:,1:s%ny) = 0.5*(s%ue_sed(:,1:s%ny)+s%ue_sed(:,2:s%ny+1))
             if (xmpi_isright) then
-               uev_sed(:,1:s%ny+1) = uev_sed(:,1:s%ny)
+               uev_sed(:,s%ny+1) = uev_sed(:,s%ny)
             endif
         else
             uau=s%ua*costhm

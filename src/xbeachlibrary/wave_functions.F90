@@ -765,9 +765,16 @@ contains
       type(parameters)                                :: par
 
       real*8                                          :: Lbr
-      real*8, dimension(s%nx+1)                       :: utemp
+      real*8, dimension(par%nx+1)                     :: utemp
       integer                                         :: jx,jy,i,j1,nbr,tempxid
-      integer, dimension(s%nx+1)                      :: ibr
+      integer, dimension(par%nx+1)                    :: ibr
+#ifdef USEMPI
+      integer, save                                   :: mcomm = MPI_COMM_NULL
+      integer                                         :: ierr,p,grank,nowned,nownedp,offset,gi
+      integer, dimension(:), allocatable              :: recvcounts,displs
+      real*8, dimension(:), allocatable               :: sendbuf,recvbuf
+      real*8, dimension(:,:), allocatable             :: global_ustr,global_xz
+#endif
 
       !include 's.ind'
       !include 's.inp'
@@ -829,7 +836,93 @@ contains
          endwhere
       endif
 
-      ! wwvv for the parallel version, shift in the columns and rows
+#ifdef USEMPI
+      if (xmpi_m>1) then
+         ! The breaker-delay stencil has a variable offshore lookback that can
+         ! exceed the fixed four-cell subdomain overlap. Reconstruct each
+         ! processor-row's complete cross-shore input so every local point uses
+         ! the same history as the serial algorithm.
+         if (mcomm==MPI_COMM_NULL) then
+            call MPI_Comm_split(xmpi_comm,xmpi_pcol,xmpi_prow,mcomm,ierr)
+         endif
+
+         allocate(recvcounts(xmpi_m),displs(xmpi_m))
+         do p=0,xmpi_m-1
+            grank=(xmpi_pcol-1)*xmpi_m+p
+            recvcounts(p+1)=(s%icge(grank+1)-s%icgs(grank+1)+1)*(s%ny+1)
+         enddo
+         displs(1)=0
+         do p=2,xmpi_m
+            displs(p)=displs(p-1)+recvcounts(p-1)
+         enddo
+
+         nowned=s%icle(xmpi_rank+1)-s%icls(xmpi_rank+1)+1
+         allocate(sendbuf(nowned*(s%ny+1)),recvbuf(sum(recvcounts)))
+         do jy=1,s%ny+1
+            offset=(jy-1)*nowned
+            sendbuf(offset+1:offset+nowned)=s%ustr(s%icls(xmpi_rank+1):s%icle(xmpi_rank+1),jy)
+         enddo
+         call MPI_Allgatherv(sendbuf,size(sendbuf),MPI_DOUBLE_PRECISION,recvbuf, &
+                             recvcounts,displs,MPI_DOUBLE_PRECISION,mcomm,ierr)
+
+         allocate(global_ustr(par%nx+1,s%ny+1),global_xz(par%nx+1,s%ny+1))
+         do p=0,xmpi_m-1
+            grank=(xmpi_pcol-1)*xmpi_m+p
+            nownedp=s%icge(grank+1)-s%icgs(grank+1)+1
+            do jy=1,s%ny+1
+               offset=displs(p+1)+(jy-1)*nownedp
+               global_ustr(s%icgs(grank+1):s%icge(grank+1),jy)= &
+                  recvbuf(offset+1:offset+nownedp)
+            enddo
+         enddo
+
+         do jy=1,s%ny+1
+            offset=(jy-1)*nowned
+            sendbuf(offset+1:offset+nowned)=s%xz(s%icls(xmpi_rank+1):s%icle(xmpi_rank+1),jy)
+         enddo
+         call MPI_Allgatherv(sendbuf,size(sendbuf),MPI_DOUBLE_PRECISION,recvbuf, &
+                             recvcounts,displs,MPI_DOUBLE_PRECISION,mcomm,ierr)
+         do p=0,xmpi_m-1
+            grank=(xmpi_pcol-1)*xmpi_m+p
+            nownedp=s%icge(grank+1)-s%icgs(grank+1)+1
+            do jy=1,s%ny+1
+               offset=displs(p+1)+(jy-1)*nownedp
+               global_xz(s%icgs(grank+1):s%icge(grank+1),jy)= &
+                  recvbuf(offset+1:offset+nownedp)
+            enddo
+         enddo
+
+         do jy=j1,max(1,s%ny)
+            do jx=1,s%nx+1
+               gi=s%is(xmpi_rank+1)+jx-1
+               if (gi==1) cycle
+               if(s%wete(jx,jy)==1) then
+                  nbr=0
+                  Lbr=sqrt(par%g*s%hhw(jx,jy))*par%Trep*par%breakerdelay
+                  i=gi-1
+                  do while (abs(global_xz(i,jy)-global_xz(gi,jy))<=Lbr .and. i>1)
+                     nbr=nbr+1
+                     i=i-1
+                  enddo
+                  if(nbr>1) then
+                     do i=1,nbr+1
+                        ibr(i)=i
+                        tempxid=gi-nbr+i-1
+                        utemp(i)=global_ustr(tempxid,jy)
+                     enddo
+                     s%usd(jx,jy)=sum(ibr(1:nbr+1)*utemp(1:nbr+1))/sum(ibr(1:nbr+1))
+                  else
+                     s%usd(jx,jy)=global_ustr(gi,jy)
+                  endif
+               endif
+            enddo
+         enddo
+         if (xmpi_istop) s%usd(1,:)=s%usd(2,:)
+         if (xmpi_isbot) s%usd(s%nx+1,:)=s%usd(s%nx,:)
+
+         deallocate(global_ustr,global_xz,sendbuf,recvbuf,recvcounts,displs)
+      endif
+#endif
 
    end subroutine breakerdelay
    
