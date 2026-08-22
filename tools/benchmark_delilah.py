@@ -31,6 +31,46 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def git_provenance(repo: Path) -> dict[str, object]:
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo,
+        text=True,
+    ).splitlines()
+    unstaged = subprocess.check_output(
+        ["git", "diff", "--binary", "HEAD"], cwd=repo
+    )
+    return {
+        "commit": commit,
+        "dirty": bool(status),
+        "status": status,
+        "working_diff_sha256": sha256_bytes(unstaged),
+    }
+
+
+def cpu_model() -> str:
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.is_file():
+        for line in cpuinfo.read_text(errors="replace").splitlines():
+            if line.lower().startswith("model name"):
+                return line.partition(":")[2].strip()
+    return platform.processor()
+
+
+def load_average() -> list[float] | None:
+    try:
+        return list(os.getloadavg())
+    except OSError:
+        return None
+
+
 def replace_scalar(text: str, key: str, value: str) -> str:
     pattern = re.compile(rf"(?im)^(\s*{re.escape(key)}\s*=\s*)[^\r\n]+")
     updated, count = pattern.subn(rf"\g<1>{value}", text, count=1)
@@ -70,6 +110,8 @@ def run_once(executable: Path, case_dir: Path) -> dict[str, object]:
         item for item in (str(library_dir), env.get("DYLD_LIBRARY_PATH", "")) if item
     )
 
+    started_at = datetime.now(timezone.utc).isoformat()
+    load_before = load_average()
     started = time.perf_counter()
     completed = subprocess.run(
         [str(executable)],
@@ -98,6 +140,9 @@ def run_once(executable: Path, case_dir: Path) -> dict[str, object]:
         raise RuntimeError(f"missing output files: {', '.join(missing)}")
 
     return {
+        "started_at": started_at,
+        "load_average_before": load_before,
+        "load_average_after": load_average(),
         "wall_seconds": wall_seconds,
         "reported_seconds": reported_seconds,
         "timesteps": timesteps,
@@ -164,22 +209,46 @@ def main() -> int:
 
     ensure_consistent(retained)
     walls = [cast(float, run["wall_seconds"]) for run in retained]
+    library_dir = executable.parents[2] / "xbeachlibrary" / ".libs"
+    libraries = sorted(library_dir.glob("libxbeach.*"))
+    linked_library = next((path.resolve() for path in libraries if path.is_symlink()), None)
+    case_hashes = {
+        str(path.relative_to(case_source)): sha256(path)
+        for path in sorted(case_source.iterdir())
+        if path.is_file()
+    }
+    relevant_environment = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key.startswith(("OMP_", "GOMP_", "KMP_"))
+        or key in {"LANG", "LC_ALL", "LD_PRELOAD"}
+    }
+    provenance = git_provenance(repo)
     report = {
-        "schema": 1,
+        "schema": 2,
         "measured_at": datetime.now(timezone.utc).isoformat(),
-        "source_commit": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=repo, text=True
-        ).strip(),
+        "source_commit": provenance["commit"],
+        "source_tree": provenance,
         "executable": str(executable),
+        "executable_sha256": sha256(executable),
+        "linked_library": str(linked_library) if linked_library else None,
+        "linked_library_sha256": sha256(linked_library) if linked_library else None,
+        "runner_sha256": sha256(Path(__file__).resolve()),
+        "command": [str(Path(__file__).resolve()), *sys.argv[1:]],
         "compiler": subprocess.check_output(
             ["gfortran", "--version"], text=True
         ).splitlines()[0],
         "host": {
             "platform": platform.platform(),
             "machine": platform.machine(),
-            "processor": platform.processor(),
+            "processor": cpu_model(),
             "cpu_count": os.cpu_count(),
+            "cpu_affinity": sorted(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else None,
         },
+        "environment": relevant_environment,
+        "case_input_hashes": case_hashes,
         "workload": {
             "case": "DELILAH",
             "nx": 177,

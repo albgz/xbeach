@@ -23,5 +23,8 @@ python3 tools/benchmark_delilah.py --tstop 20 --runs 2
 
 The runner creates a clean directory per run, measures wall time, records the
 model-reported duration and timestep count, hashes every retained field, and
-fails if retained runs do not agree. Compare performance only when the workload,
-compiler, host, timestep count, output sizes, and all four hashes match.
+fails if retained runs do not agree. Its JSON also records the source-tree/diff
+state, input and executable hashes, CPU affinity, load, compiler, and host.
+Promotion evidence should come from a clean tree; dirty-tree reports are for
+candidate experiments. Compare performance only when the workload, compiler,
+host, timestep count, output sizes, and all four hashes match.
