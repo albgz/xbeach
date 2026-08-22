@@ -14,6 +14,7 @@
 
 program hotkernel_tests
 
+   use iso_fortran_env, only: int64
    use paramsconst
    use spaceparamsdef
    use wave_functions_module
@@ -23,6 +24,7 @@ program hotkernel_tests
    integer :: failures, i, j, k
 
    failures = 0
+   if (storage_size(0.0d0) /= 64) error stop "tests require 64-bit double precision"
 
    ! Production-scale grid (DELILAH uses 1 m spacing, dt ~ 0.16 s)
    call test_advecxho_upwind1
@@ -43,14 +45,15 @@ contains
       character(len=*), intent(in) :: name
       real*8, intent(in) :: got(n1,n2,n3), want(n1,n2,n3)
       integer, intent(in) :: n1,n2,n3
-      integer :: i,j,k, first_bad
+      integer :: i,j,k
+      integer(int64) :: got_bits, want_bits
 
-      first_bad = -1
       do k=1,n3
          do j=1,n2
             do i=1,n1
-               if (got(i,j,k) /= want(i,j,k)) then
-                  if (first_bad < 0) first_bad = 1
+               got_bits = transfer(got(i,j,k), got_bits)
+               want_bits = transfer(want(i,j,k), want_bits)
+               if (got_bits /= want_bits) then
                   write(*,'(a,a,a)') "  FAIL ", name, " at ("// &
                        trim(adjustl(itoa(i)))//","// &
                        trim(adjustl(itoa(j)))//","// &
@@ -65,6 +68,17 @@ contains
       end do
       write(*,'(a,a,a)') "  pass ", name, " (bit-exact)"
    end subroutine check
+
+   subroutine check_true(name, condition)
+      character(len=*), intent(in) :: name
+      logical, intent(in) :: condition
+      if (condition) then
+         write(*,'(a,a)') "  pass ", name
+      else
+         write(*,'(a,a)') "  FAIL ", name
+         failures = failures + 1
+      end if
+   end subroutine check_true
 
    function itoa(n) result(s)
       integer, intent(in) :: n
@@ -84,13 +98,14 @@ contains
       integer :: wete(nx+1,ny+1)
       integer :: i,j,k
       real*8 :: cgxu_local
+      logical :: positive_seen, negative_seen
 
       do k=1,ntheta
          do j=1,ny+1
             do i=1,nx+1
                ee(i,j,k)  = 5.0d0 + 0.1d0*i + 0.05d0*j + 0.01d0*k
-               ! mix of + and - cgx so both upwind branches run
-               cgx(i,j,k) = 1.5d0 + 0.2d0*mod(i+k,3) - 0.4d0*mod(i-j,2)
+               ! Constant along i so each face average keeps its selected sign.
+               cgx(i,j,k) = merge(1.5d0, -1.5d0, mod(j+k,2) == 0)
             end do
          end do
       end do
@@ -114,11 +129,15 @@ contains
       ! independent reference (same operation order as production)
       flux = 0.0d0
       ref  = 0.0d0
+      positive_seen = .false.
+      negative_seen = .false.
       do k=1,ntheta
          do j=1,ny+1
             do i=1,nx
                if (wete(i,j)==1) then
                   cgxu_local = 0.5d0*(cgx(i+1,j,k)+cgx(i,j,k))
+                  positive_seen = positive_seen .or. cgxu_local > 0.d0
+                  negative_seen = negative_seen .or. cgxu_local < 0.d0
                   if (cgxu_local>0) then
                      flux(i,j) = ee(i,j,k)*cgxu_local*dnu(i,j)
                   else
@@ -137,6 +156,7 @@ contains
       end do
 
       call check("advecxho upwind1", xadvec, ref, nx+1, ny+1, ntheta)
+      call check_true("advecxho upwind1 exercised both signs", positive_seen .and. negative_seen)
    end subroutine test_advecxho_upwind1
 
 ! ------------------------------------------------------------------
@@ -151,12 +171,14 @@ contains
       integer :: wete(nx+1,ny+1)
       integer :: i,j,k
       real*8 :: cgyv_local
+      logical :: positive_seen, negative_seen
 
       do k=1,ntheta
          do j=1,ny+1
             do i=1,nx+1
                ee(i,j,k)  = 4.0d0 + 0.15d0*j + 0.02d0*i + 0.03d0*k
-               cgy(i,j,k) = -1.2d0 + 0.3d0*mod(j+k,3)
+               ! Constant along j so each face average keeps its selected sign.
+               cgy(i,j,k) = merge(1.2d0, -1.2d0, mod(i+k,2) == 0)
             end do
          end do
       end do
@@ -173,11 +195,15 @@ contains
 
       flux = 0.0d0
       ref  = 0.0d0
+      positive_seen = .false.
+      negative_seen = .false.
       do k=1,ntheta
          do j=1,ny
             do i=1,nx+1
                if (wete(i,j)==1) then
                   cgyv_local = 0.5d0*(cgy(i,j+1,k)+cgy(i,j,k))
+                  positive_seen = positive_seen .or. cgyv_local > 0.d0
+                  negative_seen = negative_seen .or. cgyv_local < 0.d0
                   if (cgyv_local>0) then
                      flux(i,j) = ee(i,j,k)*cgyv_local*dsv(i,j)
                   else
@@ -196,6 +222,7 @@ contains
       end do
 
       call check("advecyho upwind1", yadvec, ref, nx+1, ny+1, ntheta)
+      call check_true("advecyho upwind1 exercised both signs", positive_seen .and. negative_seen)
    end subroutine test_advecyho_upwind1
 
 ! ------------------------------------------------------------------
@@ -210,12 +237,14 @@ contains
       integer :: i,j,k
       real*8 :: ctb_local
       real*8, parameter :: dtheta = 0.1d0
+      logical :: positive_seen, negative_seen
 
       do k=1,ntheta
          do j=1,ny+1
             do i=1,nx+1
                ee(i,j,k)  = 2.0d0 + 0.1d0*k + 0.05d0*mod(i,5)
-               cth(i,j,k) = 0.3d0 + 0.1d0*mod(i+k,3) - 0.2d0*mod(j,2)
+               ! Constant along theta so each bin-face average keeps its sign.
+               cth(i,j,k) = merge(0.4d0, -0.4d0, mod(i+j,2) == 0)
             end do
          end do
       end do
@@ -227,12 +256,16 @@ contains
                         SCHEME_UPWIND_1, wete)
 
       ref = 0.0d0
+      positive_seen = .false.
+      negative_seen = .false.
       do j=1,ny+1
          do i=1,nx+1
             if (wete(i,j)==1) then
                fluxt = 0.0d0
                do k=1,ntheta-1
                   ctb_local = 0.5d0*(cth(i,j,k+1)+cth(i,j,k))
+                  positive_seen = positive_seen .or. ctb_local > 0.d0
+                  negative_seen = negative_seen .or. ctb_local < 0.d0
                   if (ctb_local>0) then
                      fluxt(k) = ee(i,j,k)*ctb_local
                   else
@@ -249,6 +282,7 @@ contains
       end do
 
       call check("advecthetaho upwind1", tadvec, ref, nx+1, ny+1, ntheta)
+      call check_true("advecthetaho upwind1 exercised both signs", positive_seen .and. negative_seen)
    end subroutine test_advecthetaho_upwind1
 
 ! ------------------------------------------------------------------
@@ -264,12 +298,13 @@ contains
       integer :: i,j,k
       real*8 :: cgxu_local, eupw_local
       real*8, parameter :: dt = 0.16d0
+      logical :: positive_seen, negative_seen
 
       do k=1,ntheta
          do j=1,ny+1
             do i=1,nx+1
                ee(i,j,k)  = 3.0d0 + 0.2d0*i + 0.07d0*j + 0.011d0*k
-               cgx(i,j,k) = 2.0d0 + 0.3d0*mod(i,3) - 0.5d0*mod(j+k,2)
+               cgx(i,j,k) = merge(2.0d0, -2.0d0, mod(j+k,2) == 0)
             end do
          end do
       end do
@@ -291,11 +326,15 @@ contains
       ! .true., so boundary columns i=1 and i=nx are computed too.
       flux = 0.0d0
       ref  = 0.0d0
+      positive_seen = .false.
+      negative_seen = .false.
       do k=1,ntheta
          do j=1,ny+1
             do i=2,nx-1
                if (wete(i,j)==1) then
                   cgxu_local = 0.5d0*(cgx(i+1,j,k)+cgx(i,j,k))
+                  positive_seen = positive_seen .or. cgxu_local > 0.d0
+                  negative_seen = negative_seen .or. cgxu_local < 0.d0
                   if (cgxu_local>0) then
                      eupw_local = ((dsu(i-1,j)+0.5d0*dsu(i,j))*ee(i,j,k) &
                                    -0.5d0*dsu(i,j)*ee(i-1,j,k))/dsu(i-1,j)
@@ -357,6 +396,7 @@ contains
       end do
 
       call check("advecxho warmbeam", xadvec, ref, nx+1, ny+1, ntheta)
+      call check_true("advecxho warmbeam exercised both signs", positive_seen .and. negative_seen)
    end subroutine test_advecxho_warmbeam
 
 end program hotkernel_tests

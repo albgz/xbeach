@@ -15,6 +15,7 @@
 
 program hotkernels2
 
+   use iso_fortran_env, only: int64
    use params
    use spaceparams
    use wave_functions_module
@@ -47,6 +48,8 @@ program hotkernels2
    integer :: i, j, kk
    real*8 :: clip
 
+   if (storage_size(0.0d0) /= 64) error stop "tests require 64-bit double precision"
+
    call hdr("1) iteratedispersion")
 
    ! deep water: tanh(2*pi*h/L0) -> 1, so L -> L0
@@ -66,8 +69,8 @@ program hotkernels2
    call check("shallow water: L > 2*pi*h*0.9", shalL > 0.9d0*(4.d0*atan(1.d0))*6.d0)
 
    ! determinism
-   call check("deterministic (bit-exact repeat)", &
-        iteratedispersion(100.d0, 400.d0, 4.d0*atan(1.d0), 500.d0) == deepL)
+   call check("deterministic (bit-exact repeat)", bit_equal( &
+        iteratedispersion(100.d0, 400.d0, 4.d0*atan(1.d0), 500.d0), deepL))
 
    call hdr("2) compute_wave_direction_velocities (wci = 0)")
 
@@ -143,8 +146,8 @@ program hotkernels2
    call check("Dano clip active (some wet point reaches the limit)", &
         maxval(abs(ctheta(:,:,:))) >= clip - 1.d-15)
    do kk = 1, t_nth
-      call check("dry cell zero: cgx(2,2,"//trim(it2(kk))//")", cgx(2,2,kk) == 0.d0)
-      call check("dry cell zero: ctheta(2,2,"//trim(it2(kk))//")", ctheta(2,2,kk) == 0.d0)
+      call check("dry cell zero: cgx(2,2,"//trim(it2(kk))//")", bit_equal(cgx(2,2,kk), 0.d0))
+      call check("dry cell zero: ctheta(2,2,"//trim(it2(kk))//")", bit_equal(ctheta(2,2,kk), 0.d0))
    enddo
 
    ! --- wci = 1 with zero currents must equal wci = 0 (bit-for-bit) -----
@@ -233,9 +236,9 @@ program hotkernels2
         maxval(abs(sigt - 2.d0*(4.d0*atan(1.d0))/10.d0)) < 1.0d-12)
 
    ! L1 lateral (y) boundary copies in the serial build (all flags true)
-   call check("L1 lateral bc: L1(:,1) == L1(:,2)",  all(l1(:,1) == l1(:,2)))
+   call check("L1 lateral bc: L1(:,1) == L1(:,2)",  all(bit_equal(l1(:,1), l1(:,2))))
    call check("L1 lateral bc: L1(:,"//trim(it2(t_ny+1))//") == L1(:,"//trim(it2(t_ny))//")", &
-        all(l1(:,t_ny+1) == l1(:,t_ny)))
+        all(bit_equal(l1(:,t_ny+1), l1(:,t_ny))))
 
    ! interior-row fixed-point closure: L1 = L0 tanh(2 pi h / L1),
    ! L0 = g Trep^2 / (2 px). Only interior y-rows (2..ny) are pure fixed
@@ -249,19 +252,28 @@ program hotkernels2
         resid < 1.0d-5)
 
    ! k = 2px/L1 (same formula, bit-for-bit; all cells wet here)
-   call check("k == 2*px/L1 bit-exact", all(k(:,:) == 2.d0*(4.d0*atan(1.d0))/l1(:,:)))
+   call check("k == 2*px/L1 bit-exact", &
+        all(bit_equal(k(:,:), 2.d0*(4.d0*atan(1.d0))/l1(:,:))))
 
    ! determinism: L1 is recomputed fresh every step from the same inputs,
    ! so a third step must reproduce it bit-for-bit
    l1 = l1 + 0.d0
    sigm_copy(:,:) = l1
    call wave_dispersion(s, par_disp())
-   call check("step-to-step determinism (L1 bit-identical)", all(l1 == sigm_copy))
+   call check("step-to-step determinism (L1 bit-identical)", all(bit_equal(l1, sigm_copy)))
 
    call summary
    stop 0
 
 contains
+
+   pure elemental logical function bit_equal(a, b)
+   real*8, intent(in) :: a, b
+   integer(int64) :: a_bits, b_bits
+      a_bits = transfer(a, a_bits)
+      b_bits = transfer(b, b_bits)
+      bit_equal = a_bits == b_bits
+   end function bit_equal
 
    !--------------------------------------------------------------------
    function par_wci(wci) result(p)
@@ -331,18 +343,8 @@ contains
    subroutine cmp3(label, a, b)
    character(len=*), intent(in) :: label
    real*8, intent(in) :: a(:,:,:), b(:,:,:)
-   real*8 :: d
-   integer :: i, j, kk
 
-      d = 0.d0
-      do kk = 1, t_nth
-         do j = 1, t_ny+1
-            do i = 1, t_nx+1
-               d = max(d, abs(a(i,j,kk)-b(i,j,kk)))
-            enddo
-         enddo
-      enddo
-      call check(label//" bit-exact (maxdiff = "//trim(es2(d))//")", d == 0.d0)
+      call check(label//" bit-exact", all(bit_equal(a, b)))
 
    end subroutine cmp3
 
