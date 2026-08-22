@@ -159,6 +159,49 @@ program hotkernels2
    call cmp3("cy    wci1(u=v=0) == wci0", cy,   ref_cy)
    call cmp3("ctheta wci1(u=v=0) == wci0", ctheta, ref_cth)
 
+   ! --- wci = 1 with non-zero currents and velocity gradients -----------
+   ! This is the branch most likely to drift during the elementwise rewrite.
+   call hdr("2c) wci = 1, non-zero currents (exact scalar reference)")
+   do j = 1, t_ny+1
+      do i = 1, t_nx+1
+         u(i,j) = 0.03d0*i - 0.02d0*j
+         v(i,j) = -0.01d0*i + 0.04d0*j
+         dudx2(i,j) = 0.001d0*i
+         dudy2(i,j) = -0.002d0*j
+         dvdx2(i,j) = 0.003d0*j
+         dvdy2(i,j) = -0.004d0*i
+      enddo
+   enddo
+   do kk = 1, t_nth
+      do j = 1, t_ny+1
+         do i = 1, t_nx+1
+            if (wete(i,j) == 1) then
+               ref_cgx(i,j,kk) = cg(i,j)*costh(i,j,kk)+u(i,j)
+               ref_cgy(i,j,kk) = cg(i,j)*sinth(i,j,kk)+v(i,j)
+               ref_cx(i,j,kk)  = c(i,j)*costh(i,j,kk)+u(i,j)
+               ref_cy(i,j,kk)  = c(i,j)*sinth(i,j,kk)+v(i,j)
+               L = sigm(i,j)/s2k2(i,j)*(dhdx2(i,j)*sinth(i,j,kk)-dhdy2(i,j)*costh(i,j,kk)) + &
+                    (costh(i,j,kk)*(sinth(i,j,kk)*dudx2(i,j)-costh(i,j,kk)*dudy2(i,j)) + &
+                     sinth(i,j,kk)*(sinth(i,j,kk)*dvdx2(i,j)-costh(i,j,kk)*dvdy2(i,j)))
+               ref_cth(i,j,kk) = sign(1.d0,L)*min(abs(L),clip)
+            else
+               ref_cgx(i,j,kk) = 0.d0
+               ref_cgy(i,j,kk) = 0.d0
+               ref_cx(i,j,kk)  = 0.d0
+               ref_cy(i,j,kk)  = 0.d0
+               ref_cth(i,j,kk) = 0.d0
+            endif
+         enddo
+      enddo
+   enddo
+   call compute_wave_direction_velocities(s, par_wci(1), 0, dhdx2, dhdy2, &
+        dudx2, dudy2, dvdx2, dvdy2, s2k2)
+   call cmp3("cgx   wci1(non-zero)", cgx, ref_cgx)
+   call cmp3("cgy   wci1(non-zero)", cgy, ref_cgy)
+   call cmp3("cx    wci1(non-zero)", cx, ref_cx)
+   call cmp3("cy    wci1(non-zero)", cy, ref_cy)
+   call cmp3("ctheta wci1(non-zero)", ctheta, ref_cth)
+
    call hdr("3) wave_dispersion (wci = 0), two steps")
 
    ! reset the state fields dispersion touches (keep the wci fields)
