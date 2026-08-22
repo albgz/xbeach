@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Run the frozen DELILAH case and record comparable timing and output hashes."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import cast
+
+OUTPUTS = ("H.dat", "E.dat", "Fx.dat", "Fy.dat")
+TIMESTEPS_RE = re.compile(r"Timesteps\s*:\s*(\d+)")
+DURATION_RE = re.compile(r"Duration\s*:\s*([0-9.Ee+-]+)")
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def replace_scalar(text: str, key: str, value: str) -> str:
+    pattern = re.compile(rf"(?im)^(\s*{re.escape(key)}\s*=\s*)[^\r\n]+")
+    updated, count = pattern.subn(rf"\g<1>{value}", text, count=1)
+    if count != 1:
+        raise ValueError(f"expected one {key}= entry, found {count}")
+    return updated
+
+
+def prepare_case(source: Path, destination: Path, tstop: float | None) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    if tstop is not None:
+        params = destination / "params.txt"
+        text = params.read_text()
+        formatted = f"{tstop:.12g}"
+        text = replace_scalar(text, "tstop", formatted)
+        text = replace_scalar(text, "tstart", formatted)
+        params.write_text(text)
+
+
+def parse_run_log(text: str) -> tuple[int, float]:
+    steps = TIMESTEPS_RE.findall(text)
+    durations = DURATION_RE.findall(text)
+    if not steps or not durations:
+        raise RuntimeError("XBeach log did not contain Duration and Timesteps")
+    return int(steps[-1]), float(durations[-1])
+
+
+def run_once(executable: Path, case_dir: Path) -> dict[str, object]:
+    env = os.environ.copy()
+    library_dir = executable.parents[2] / "xbeachlibrary" / ".libs"
+    env["LD_LIBRARY_PATH"] = os.pathsep.join(
+        item for item in (str(library_dir), env.get("LD_LIBRARY_PATH", "")) if item
+    )
+    env["DYLD_LIBRARY_PATH"] = os.pathsep.join(
+        item for item in (str(library_dir), env.get("DYLD_LIBRARY_PATH", "")) if item
+    )
+
+    started = time.perf_counter()
+    completed = subprocess.run(
+        [str(executable)],
+        cwd=case_dir,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    wall_seconds = time.perf_counter() - started
+    (case_dir / "console.log").write_text(completed.stdout)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"XBeach exited with {completed.returncode}; see {case_dir / 'console.log'}"
+        )
+
+    log_text = completed.stdout
+    xblog = case_dir / "XBlog.txt"
+    if xblog.exists():
+        log_text += "\n" + xblog.read_text(errors="replace")
+    timesteps, reported_seconds = parse_run_log(log_text)
+
+    missing = [name for name in OUTPUTS if not (case_dir / name).is_file()]
+    if missing:
+        raise RuntimeError(f"missing output files: {', '.join(missing)}")
+
+    return {
+        "wall_seconds": wall_seconds,
+        "reported_seconds": reported_seconds,
+        "timesteps": timesteps,
+        "hashes": {name: sha256(case_dir / name) for name in OUTPUTS},
+        "sizes": {name: (case_dir / name).stat().st_size for name in OUTPUTS},
+    }
+
+
+def ensure_consistent(runs: list[dict[str, object]]) -> None:
+    reference = (runs[0]["timesteps"], runs[0]["hashes"], runs[0]["sizes"])
+    for index, run in enumerate(runs[1:], start=2):
+        current = (run["timesteps"], run["hashes"], run["sizes"])
+        if current != reference:
+            raise RuntimeError(f"retained run {index} differs from retained run 1")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    repo = Path(__file__).resolve().parents[1]
+    parser.add_argument(
+        "--executable",
+        type=Path,
+        default=repo / "src" / "xbeach" / ".libs" / "xbeach",
+    )
+    parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--warmups", type=int, default=0)
+    parser.add_argument(
+        "--work-root", type=Path, default=Path("/tmp/xbeach-delilah-benchmark")
+    )
+    parser.add_argument(
+        "--tstop",
+        type=float,
+        help="Override tstop and move the single global output to that time (smoke runs)",
+    )
+    parser.add_argument("--output", type=Path, help="Write the JSON result to this path")
+    args = parser.parse_args()
+
+    if args.runs < 1 or args.warmups < 0:
+        parser.error("--runs must be at least 1 and --warmups cannot be negative")
+
+    executable = args.executable.resolve()
+    if not executable.is_file():
+        parser.error(f"executable does not exist: {executable}")
+    case_source = repo / "case-delilah"
+    if not (case_source / "params.txt").is_file():
+        parser.error(f"benchmark input is missing: {case_source / 'params.txt'}")
+
+    args.work_root.mkdir(parents=True, exist_ok=True)
+    retained: list[dict[str, object]] = []
+    total = args.warmups + args.runs
+    for ordinal in range(total):
+        label = "warmup" if ordinal < args.warmups else "run"
+        number = ordinal + 1 if label == "warmup" else ordinal - args.warmups + 1
+        run_dir = args.work_root / f"{label}-{number}"
+        prepare_case(case_source, run_dir, args.tstop)
+        result = run_once(executable, run_dir)
+        print(
+            f"{label} {number}: {result['wall_seconds']:.6f} s, "
+            f"{result['timesteps']} timesteps",
+            flush=True,
+        )
+        if label == "run":
+            retained.append(result)
+
+    ensure_consistent(retained)
+    walls = [cast(float, run["wall_seconds"]) for run in retained]
+    report = {
+        "schema": 1,
+        "measured_at": datetime.now(timezone.utc).isoformat(),
+        "source_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+        ).strip(),
+        "executable": str(executable),
+        "compiler": subprocess.check_output(
+            ["gfortran", "--version"], text=True
+        ).splitlines()[0],
+        "host": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "cpu_count": os.cpu_count(),
+        },
+        "workload": {
+            "case": "DELILAH",
+            "nx": 177,
+            "ny": 70,
+            "directions": 9,
+            "random": 0,
+            "tstop": args.tstop if args.tstop is not None else 3800.0,
+            "output_time": args.tstop if args.tstop is not None else 3800.0,
+        },
+        "warmups": args.warmups,
+        "runs": retained,
+        "median_wall_seconds": statistics.median(walls),
+        "minimum_wall_seconds": min(walls),
+        "maximum_wall_seconds": max(walls),
+        "output_hashes": retained[0]["hashes"],
+        "output_sizes": retained[0]["sizes"],
+        "timesteps": retained[0]["timesteps"],
+    }
+    encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded)
+    print(encoded, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"benchmark failed: {error}", file=sys.stderr)
+        raise SystemExit(1)

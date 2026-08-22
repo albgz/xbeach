@@ -40,6 +40,10 @@ m4/lt~obsolete.m4
 version.dat
 src/xbeachlibrary/*.inc
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Case / benchmark work dirs
 case1d/
 case2d/
