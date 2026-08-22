@@ -106,7 +106,7 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
    endif
 
    delta  = facdel*max(delta,exp(1.)*z0/h)
-   delta  = min(delta,0.5)
+   delta  = min(delta,0.5d0)
    phiw   = 6./delta/delta
        
    Df    = facDf*.283*rho*fw*uorb**3
@@ -277,7 +277,7 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
 !  Construct velocity profile for bottom layer (both sigma < sigmat and
 !  sigma > sigmat) and middle layer
 
-   do 10 i=1,n
+   do i=1,n
 
       sigma=sigz(i)
 
@@ -325,10 +325,12 @@ subroutine vsm_u_XB (  ue    ,ve    ,h     ,ks    ,               &
      endif
      
 
-10 continue
+   end do
 
      ! Construct representative velocity for sediment transport using Rouse profile
-     ustar=sqrt(0.5d0*fw)*max(urms,1.e-6)
+     ! Preserve the legacy single-precision threshold value while giving MAX
+     ! standard-conforming arguments of the same kind.
+     ustar=sqrt(0.5d0*fw)*max(urms,real(1.e-6,kind=kind(urms)))
      rousepar=ws/kappa/ustar
      ast=ks/h
      do i=1,n
