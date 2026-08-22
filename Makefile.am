@@ -6,6 +6,7 @@ EXTRA_DIST = \
 	scripts/generate.py \
 	tools/benchmark_delilah.py \
 	case-delilah/README.md \
+	case-delilah/oracle.json \
 	case-delilah/params.txt \
 	case-delilah/params_original.txt \
 	case-delilah/RF_table.txt \

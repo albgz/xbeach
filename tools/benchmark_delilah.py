@@ -318,6 +318,46 @@ def input_hashes(case_dir: Path) -> dict[str, str]:
     }
 
 
+def validate_frozen_oracle(
+    case_source: Path, expected_tstop: float, runs: list[dict[str, object]]
+) -> dict[str, object]:
+    path = case_source / "oracle.json"
+    oracle = cast(dict[str, object], json.loads(path.read_text()))
+    workload = cast(dict[str, object], oracle["workload"])
+    applied = expected_tstop == float(cast(float, workload["tstop"]))
+    result = {
+        "path": str(path),
+        "sha256": sha256(path),
+        "source_commit": oracle["source_commit"],
+        "applied": applied,
+    }
+    if not applied:
+        return result
+
+    first = runs[0]
+    validation = cast(dict[str, object], first["validation"])
+    observed = {
+        "timesteps": first["timesteps"],
+        "values_per_field": validation["values_per_field"],
+        "output_hashes": first["hashes"],
+        "output_sizes": first["sizes"],
+        "dims_sha256": validation["dims_sha256"],
+    }
+    expected = {
+        "timesteps": workload["timesteps"],
+        "values_per_field": workload["values_per_field"],
+        "output_hashes": oracle["output_hashes"],
+        "output_sizes": oracle["output_sizes"],
+        "dims_sha256": oracle["dims_sha256"],
+    }
+    if observed != expected:
+        raise RuntimeError(
+            f"full DELILAH result differs from frozen oracle: "
+            f"observed={observed}, expected={expected}"
+        )
+    return result
+
+
 def run_once(
     executable: Path,
     case_dir: Path,
@@ -463,6 +503,7 @@ def main() -> int:
             retained.append(result)
 
     ensure_consistent(retained)
+    oracle = validate_frozen_oracle(case_source, expected_tstop, retained)
     if runtime_artifacts(executable, env) != artifacts:
         raise RuntimeError("runtime artifacts changed across the benchmark")
     if git_provenance(source_repo) != provenance:
@@ -506,6 +547,7 @@ def main() -> int:
         "environment": relevant_environment,
         "case_input_hashes": case_hashes,
         "effective_input_hashes": retained[0]["effective_input_hashes"],
+        "frozen_oracle": oracle,
         "workload": {
             "case": "DELILAH",
             "nx": output_validation["nx"],

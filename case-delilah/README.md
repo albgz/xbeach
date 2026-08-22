@@ -34,7 +34,11 @@ source fixture and effective per-run input hashes, so `--tstop` smoke overrides
 cannot be confused with the full workload. Before and after every sample it
 binds the clean/dirty source and runner trees, runner, compiler, ELF executable,
 actually loaded `libxbeach.so`, and dynamic dependency closure. Every retained
-science field is hashed with full SHA-256.
+science field is hashed with full SHA-256. For the full `tstop=3800`
+workload, the runner also fails unless timesteps, dimensions, sizes, and all four
+field hashes match `oracle.json`, frozen from the clean first current-compiler
+build-compatible commit (`8ccf245`). Short smoke overrides record that the
+oracle was not applied and cannot be mistaken for full regression evidence.
 
 Promotion evidence should come from a clean tree; dirty-tree reports are for
 candidate experiments. Compare performance only when the workload, compiler,

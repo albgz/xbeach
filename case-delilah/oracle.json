@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "description": "Frozen GNU Fortran 16.2.1 DELILAH numerical oracle from the first current-compiler build-compatible commit",
+  "source_commit": "8ccf245997bbb94b9edc43fdead341ff1db81faf",
+  "workload": {
+    "nx": 177,
+    "ny": 70,
+    "directions": 9,
+    "random": 0,
+    "tstop": 3800.0,
+    "timesteps": 23743,
+    "values_per_field": 12638
+  },
+  "output_hashes": {
+    "E.dat": "7fcc0ac6356685fd5db24020c82e3124b559a1642669f13fb012c9bbc3872856",
+    "Fx.dat": "9180d3f2fb728db29cf529519f60f5a5795947160e44f2bc578437d8edf0919e",
+    "Fy.dat": "5b4a080cb99847eb288eecbc7ff9084ea9b5487ba026a22069bbe39f592c44fa",
+    "H.dat": "43aa429cac80e5d30e394ad35f25fd9bbd031b468633b467095114e4bff4f813"
+  },
+  "output_sizes": {
+    "E.dat": 101104,
+    "Fx.dat": 101104,
+    "Fy.dat": 101104,
+    "H.dat": 101104
+  },
+  "dims_sha256": "c9d2e1c1406a209114d2c3abdf4e69a1fee209cf3aa689531ae2effaef682008"
+}
