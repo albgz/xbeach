@@ -119,8 +119,10 @@ contains
       integer, dimension(nx+1,ny+1),intent(in)        :: wete
       real*8,  intent(in)                             :: dt
       integer                                         :: itheta
-      real*8 , dimension(nx+1,ny+1)                   :: dnu,dsu,dsz,dsdnzi,fluxx
-      real*8 , dimension(nx+1,ny+1,ntheta)            :: xadvec,ee,cgx
+      real*8 , dimension(nx+1,ny+1),intent(in)        :: dnu,dsu,dsz,dsdnzi
+      real*8 , dimension(nx+1,ny+1)                   :: fluxx
+      real*8 , dimension(nx+1,ny+1,ntheta),intent(in) :: ee,cgx
+      real*8 , dimension(nx+1,ny+1,ntheta),intent(out) :: xadvec
       real*8                                          :: cgxu,eupw
 
       integer                                         :: scheme_now
@@ -242,7 +244,8 @@ contains
       integer, dimension(nx+1,ny+1),intent(in)        :: wete
       integer                                         :: itheta
       real*8 , dimension(ntheta)                      :: fluxtheta
-      real*8 , dimension(nx+1,ny+1,ntheta)            :: thetaadvec,ee,ctheta
+      real*8 , dimension(nx+1,ny+1,ntheta),intent(in)  :: ee,ctheta
+      real*8 , dimension(nx+1,ny+1,ntheta),intent(out) :: thetaadvec
       real*8                                          :: dtheta,ctheta_between,eupw
 
       integer                                         :: scheme_now
@@ -335,8 +338,10 @@ contains
       integer, dimension(nx+1,ny+1),intent(in)        :: wete
       real*8,  intent(in)                             :: dt
       integer                                         :: itheta
-      real*8 ,  dimension(nx+1,ny+1)                  :: dsv,dnv,dnz,dsdnzi,fluxy
-      real*8 ,  dimension(nx+1,ny+1,ntheta)           :: yadvec,ee,cgy
+      real*8 ,  dimension(nx+1,ny+1),intent(in)       :: dsv,dnv,dnz,dsdnzi
+      real*8 ,  dimension(nx+1,ny+1)                  :: fluxy
+      real*8 ,  dimension(nx+1,ny+1,ntheta),intent(in)  :: ee,cgy
+      real*8 ,  dimension(nx+1,ny+1,ntheta),intent(out) :: yadvec
       real*8                                          :: cgyv,eupw
 
       integer                                         :: scheme_now
