@@ -5,7 +5,7 @@ module mnemiso_module
    save
 
 
-   type, bind(c) :: b_arraytype
+   type :: b_arraytype
 
       character(kind=c_char) type         ! 'i' or 'r': integer or real*8
       character(kind=c_char) btype        ! 'b' or 'd':
