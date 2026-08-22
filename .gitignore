@@ -38,6 +38,7 @@
 /src/xbeach/xbeach
 /src/xbeachlibrary/*.inc
 /src/xbeachlibrary/extractedvariables.json
+/src/xbeachlibrary/generated-includes.stamp
 /src/xbeachlibrary/version.dat
 /version.dat
 

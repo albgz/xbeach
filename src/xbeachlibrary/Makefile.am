@@ -60,10 +60,13 @@ libxbeach_la_SOURCES= \
 	introspection.F90 \
 	xbeach_bmi.f90
 
-BUILT_SOURCES= \
-	version.dat  \
+GENERATED_INCLUDES = \
+	RF.inc \
+	RFveg.inc \
 	spacedecl.inc \
 	chartoindex.inc \
+	genmpi_coll.inc \
+	genmpi_distr.inc \
 	get_var.inc \
 	get_var_shape.inc \
 	getkey.inc \
@@ -73,14 +76,20 @@ BUILT_SOURCES= \
 	index_reallocate.inc \
 	indextos.inc \
 	mnemonic.inc \
+	nh_pars.inc \
+	ranges.inc \
 	set_var.inc \
 	space_alloc_arrays.inc \
+	space_alloc_arrays_dummies.inc \
 	space_alloc_scalars.inc \
 	space_distribute.inc \
 	space_ind.inc \
 	space_inp.inc \
 	writelog.inc \
-	writeloginterface.inc
+	writeloginterface.inc \
+	xmpi_bcast.inc
+
+BUILT_SOURCES = version.dat $(GENERATED_INCLUDES)
 
 version.dat: 
 	echo "Build_Revision = '`svnversion $(top_srcdir)`'" > version.dat
@@ -89,15 +98,29 @@ version.dat:
 
 logging.F90: version.dat writelog.inc writeloginterface.inc
 
-spacedecl.inc:
+generated-includes.stamp: \
+	$(top_srcdir)/scripts/generate.py \
+	$(srcdir)/variables.f90 \
+	$(srcdir)/params.F90 \
+	$(wildcard $(srcdir)/templates/*.f90)
 	$(top_srcdir)/scripts/generate.py \
 		--source-dir $(top_srcdir)/src/xbeachlibrary \
 		--output-dir $(builddir)
+	touch $@ $(GENERATED_INCLUDES)
 
-# One generator invocation creates the complete include set. Building this
-# representative output first prevents parallel compilation from racing the
-# remaining generated includes.
-BUILT_SOURCES = spacedecl.inc
+generated-includes-check: generated-includes.stamp
+	@missing=no; \
+	for file in $(GENERATED_INCLUDES); do \
+		test -f "$$file" || missing=yes; \
+	done; \
+	if test "$$missing" = yes; then \
+		rm -f generated-includes.stamp; \
+		$(MAKE) generated-includes.stamp; \
+	fi
+
+$(GENERATED_INCLUDES): generated-includes-check
+
+.PHONY: generated-includes-check
 
 # Set flags off by default
 # include link to top_srcdir so it can find config.h, or should this be builddir
@@ -149,7 +172,7 @@ EXTRA_DIST = \
 	templates/writelog.f90 \
 	templates/writeloginterface.f90 \
 	templates/xmpi_bcast.f90
-CLEANFILES=*.mod *.MOD *.inc version.dat extractedvariables.json
+CLEANFILES=*.mod *.MOD *.inc version.dat extractedvariables.json generated-includes.stamp
 
 #depclean: clean
 #	rm -f $(deps)
