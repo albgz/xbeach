@@ -616,9 +616,13 @@ contains
       ! Robert: for some reason, MPI version does not like the "allocatable" version
       !         of this subroutine.
       real*8, dimension(1:s%nx+1,1:s%ny+1)  :: L0,kh,Ltemp
+      double precision, dimension(1:s%nx+1)  :: Lnext
+      logical, dimension(1:s%nx+1)           :: active
       integer                               :: i,j,j1,j2
       real*8                                :: backdis,disfac
-      integer                               :: index
+      integer                               :: index,dispiter
+      double precision,parameter            :: aphi = 1.d0/(((1.0d0 + sqrt(5.0d0))/2)+1)
+      double precision,parameter            :: bphi = ((1.0d0 + sqrt(5.0d0))/2)/(((1.0d0 + sqrt(5.0d0))/2)+1)
 
       if (s%ny==0) then
          j1=1
@@ -641,18 +645,28 @@ contains
       endif
       Ltemp = L0
 
+      ! Iterate one contiguous grid row at a time.  The masked array operations
+      ! retain each cell's original fixed-point sequence while eliminating
+      ! per-cell procedure-call and convergence-loop control overhead.
       do j = j1,j2
+         active = s%wete(:,j)==1
+         dispiter = 0
+         do while (any(active) .and. dispiter < 150)
+            dispiter = dispiter+1
+            where(active)
+               Lnext = L0(:,j)*tanh(2*par%px*h(:,j)/Ltemp(:,j))
+               Ltemp(:,j) = Ltemp(:,j)*aphi + Lnext*bphi
+               active = abs(Lnext-Ltemp(:,j)) > 0.00001d0
+            endwhere
+         enddo
          do i = 1,s%nx+1
-            if(s%wete(i,j)==1) then
-               Ltemp(i,j) = iteratedispersion(L0(i,j),Ltemp(i,j),par%px,h(i,j))
-               if (Ltemp(i,j)<0.d0) then   ! this is an error from iteratedispersion
-                  Ltemp(i,j) = -Ltemp(i,j)
-                  call writelog('lws','','Warning: no convergence in dispersion relation iteration at t = ', &
-                                       par%t*max(par%morfac*par%morfacopt,1.d0))
-               endif
+            if (s%wete(i,j)==1 .and. Ltemp(i,j)<0.d0) then
+               Ltemp(i,j) = -Ltemp(i,j)
+               call writelog('lws','','Warning: no convergence in dispersion relation iteration at t = ', &
+                                    par%t*max(par%morfac*par%morfacopt,1.d0))
             endif
-         end do
-      end do
+         enddo
+      enddo
       if (par%shoaldelay==1) then
          ! find Lmod looking back over distance par%facsd*L1
          ! presumes sigma direction is shore normal

@@ -1,10 +1,11 @@
 AM_FCFLAGS = -I$(top_builddir)/src/xbeachlibrary
 
-check_PROGRAMS = hotkernels_test hotkernels2_test vsm_test
+check_PROGRAMS = hotkernels_test hotkernels2_test vsm_test dispersion_batch_test
 TESTS = $(check_PROGRAMS)
 
 hotkernels_test_SOURCES = hotkernels_test.f90
 hotkernels2_test_SOURCES = hotkernels2_test.f90
 vsm_test_SOURCES = vsm_test.f90
+dispersion_batch_test_SOURCES = dispersion_batch_test.f90
 
 LDADD = $(top_builddir)/src/xbeachlibrary/libxbeach.la
